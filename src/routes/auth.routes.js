@@ -9,7 +9,9 @@ import { verifyJWT } from "../middleware/auth.middleware.js";
 
 const router = Router();
 
-router.post("/register", register);
+// Registration disabled - only admin login allowed
+// router.post("/register", register);
+
 router.post("/login", login);
 router.post("/logout", verifyJWT, logout);
 router.get("/me", verifyJWT, getCurrentUser);
