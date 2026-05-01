@@ -1,4 +1,5 @@
 import User from "../models/User.model.js";
+import Lead from "../models/Lead.model.js";
 import Organization from "../models/Organization.model.js";
 import ApiError from "../utils/apiError.js";
 import ApiResponse from "../utils/apiResponse.js";
@@ -43,14 +44,41 @@ export const getTeamMembers = asyncHandler(async (req, res) => {
 
   const total = await User.countDocuments(filter);
 
-  logger.info(`Fetched ${users.length} team members`);
+  const leadCountMap = {};
+  if (users.length) {
+    const leadCounts = await Lead.aggregate([
+      {
+        $match: {
+          organization,
+          assignedTo: { $in: users.map((user) => user._id) },
+        },
+      },
+      {
+        $group: {
+          _id: "$assignedTo",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    leadCounts.forEach((item) => {
+      leadCountMap[item._id.toString()] = item.count;
+    });
+  }
+
+  const usersWithLeadCount = users.map((user) => ({
+    ...user,
+    leadCount: leadCountMap[user._id.toString()] || 0,
+  }));
+
+  logger.info(`Fetched ${usersWithLeadCount.length} team members`);
 
   res
     .status(200)
     .json(
       new ApiResponse(
         200,
-        formatPaginatedResponse(users, total, pageNum, pageLimit),
+        formatPaginatedResponse(usersWithLeadCount, total, pageNum, pageLimit),
         "Team members fetched successfully",
       ),
     );
@@ -136,7 +164,7 @@ export const createTeamMember = asyncHandler(async (req, res) => {
  */
 export const updateUser = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { name, phone, role } = req.body;
+  const { name, phone, role, password } = req.body;
   const organization = req.user.organization;
   const userId = req.user._id;
 
@@ -158,6 +186,7 @@ export const updateUser = asyncHandler(async (req, res) => {
   if (name) user.name = name;
   if (phone) user.phone = phone;
   if (role && req.user.role === "admin") user.role = role;
+  if (password) user.password = await bcrypt.hash(password, 10);
 
   await user.save();
 
@@ -268,7 +297,7 @@ export const deleteUser = asyncHandler(async (req, res) => {
 
   // Prevent deleting organization owner
   const org = await Organization.findById(organization);
-  if (org.owner.equals(id)) {
+  if (org?.owner && org.owner.equals(id)) {
     throw new ApiError(400, "Cannot delete organization owner");
   }
 

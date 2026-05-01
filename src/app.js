@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import cookieParser from "cookie-parser";
 import mongoSanitize from "express-mongo-sanitize";
 import rateLimit from "express-rate-limit";
 import { corsOptions } from "./config/corsOptions.js";
@@ -12,6 +13,8 @@ import paymentRoutes from "./routes/payment.routes.js";
 import reminderRoutes from "./routes/reminder.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import notificationRoutes from "./routes/notification.routes.js";
+import settingsRoutes from "./routes/settings.routes.js";
+import dashboardRoutes from "./routes/dashboard.routes.js";
 
 const app = express();
 
@@ -28,6 +31,9 @@ app.use(limiter);
 
 // CORS
 app.use(cors(corsOptions));
+
+// Cookie parser
+app.use(cookieParser());
 
 // Body parser
 app.use(express.json({ limit: "16kb" }));
@@ -46,6 +52,8 @@ app.use("/api/v1/payments", paymentRoutes);
 app.use("/api/v1/reminders", reminderRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
+app.use("/api/v1/settings", settingsRoutes);
+app.use("/api/v1/dashboard", dashboardRoutes);
 
 // 404 handler
 app.use((req, res) => {

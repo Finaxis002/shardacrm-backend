@@ -39,7 +39,6 @@ const leadSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["New", "Interested", "Details Shared", "Success", "Closed"],
       default: "New",
     },
     dealValue: {

@@ -75,6 +75,48 @@ export const register = asyncHandler(async (req, res) => {
   await Settings.create({
     organization: org._id,
     companyName,
+    distributionMethod: "round_robin",
+    distributionPool: [],
+    rrIndex: 0,
+    pipelineStages: [
+      { name: "New", color: "#6b7280", order: 0 },
+      { name: "Interested", color: "#b86e00", order: 1 },
+      { name: "Details Shared", color: "#6c35de", order: 2 },
+      { name: "Success", color: "#2a7d4f", order: 3 },
+      { name: "Closed", color: "#1a1a18", order: 4 },
+    ],
+    permissions: {
+      "View all leads": { admin: true, manager: true, tl: false, exec: false, viewer: false },
+      "Add leads": { admin: true, manager: true, tl: true, exec: true, viewer: false },
+      "Edit any lead": { admin: true, manager: true, tl: false, exec: false, viewer: false },
+      "Delete leads": { admin: true, manager: false, tl: false, exec: false, viewer: false },
+      "Assign leads": { admin: true, manager: true, tl: true, exec: false, viewer: false },
+      "Change lead owner": { admin: true, manager: true, tl: false, exec: false, viewer: false },
+      "Record payments": { admin: true, manager: true, tl: false, exec: false, viewer: false },
+      "Import from sheets": { admin: true, manager: true, tl: false, exec: false, viewer: false },
+      "View team": { admin: true, manager: true, tl: true, exec: false, viewer: false },
+      "Admin panel": { admin: true, manager: false, tl: false, exec: false, viewer: false },
+    },
+    rbacExecOnly: true,
+    rbacCoEditorsCanEdit: true,
+    leadColumns: ["name", "phone", "source", "value", "status", "assign"],
+    customColumns: [],
+    gcalConnected: false,
+    gcalUser: "",
+    gmailEnabled: false,
+    gateways: {},
+    defaultGateway: "",
+    paymentLinkExpiry: 48,
+    aiProvider: "",
+    aiKey: "",
+    aiModel: "",
+    aiEndpoint: "",
+    aiPrompt: "",
+    aiAutoAnalyse: false,
+    aiScanNotes: true,
+    aiIntent: false,
+    currency: "₹",
+    timezone: "Asia/Kolkata",
   });
 
   const { accessToken, refreshToken } = await generateTokens(user._id);
@@ -137,6 +179,28 @@ export const login = asyncHandler(async (req, res) => {
         200,
         { user: user.toJSON(), accessToken },
         "User logged in successfully",
+      ),
+    );
+});
+
+export const refreshToken = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+  const { accessToken, refreshToken } = await generateTokens(userId);
+
+  const options = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+  };
+
+  return res
+    .status(200)
+    .cookie("accessToken", accessToken, options)
+    .cookie("refreshToken", refreshToken, options)
+    .json(
+      new ApiResponse(
+        200,
+        { accessToken },
+        "Access token refreshed successfully",
       ),
     );
 });

@@ -51,7 +51,6 @@ router.post(
 // PUT routes
 router.put(
   "/:id",
-  checkPermission("edit_any_lead"),
   validateRequest(updateLeadValidator, "body"),
   updateLead,
 );
