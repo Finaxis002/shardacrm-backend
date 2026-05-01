@@ -26,16 +26,30 @@ const settingsSchema = new mongoose.Schema(
       default: 0,
     },
 
-    // Pipeline
+    // Pipeline stages embedded in settings
     pipelineStages: [
       {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "PipelineStage",
+        name: {
+          type: String,
+          required: true,
+          trim: true,
+        },
+        color: {
+          type: String,
+          default: "#6b7280",
+        },
+        order: {
+          type: Number,
+          default: 0,
+        },
       },
     ],
 
     // RBAC
-    permissions: mongoose.Schema.Types.Mixed,
+    permissions: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
     rbacExecOnly: {
       type: Boolean,
       default: true,
@@ -46,14 +60,20 @@ const settingsSchema = new mongoose.Schema(
     },
 
     // Lead columns
-    leadColumns: [String],
-    customColumns: [
-      {
-        key: String,
-        label: String,
-        visible: Boolean,
-      },
-    ],
+    leadColumns: {
+      type: [String],
+      default: ["name", "phone", "source", "value", "status", "assign"],
+    },
+    customColumns: {
+      type: [
+        {
+          key: String,
+          label: String,
+          visible: Boolean,
+        },
+      ],
+      default: [],
+    },
 
     // Google Calendar
     gcalConnected: {
@@ -61,10 +81,20 @@ const settingsSchema = new mongoose.Schema(
       default: false,
     },
     gcalUser: String,
+    gmailEnabled: {
+      type: Boolean,
+      default: false,
+    },
 
     // Payment Gateways
-    gateways: mongoose.Schema.Types.Mixed,
-    defaultGateway: String,
+    gateways: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+    defaultGateway: {
+      type: String,
+      default: "",
+    },
     paymentLinkExpiry: {
       type: Number,
       default: 48,
@@ -76,15 +106,40 @@ const settingsSchema = new mongoose.Schema(
       enum: ["openai", "anthropic", "gemini", "custom", ""],
       default: "",
     },
-    aiKey: String,
-    aiModel: String,
-    aiPrompt: String,
-    aiAutoAnalyse: Boolean,
-    aiScanNotes: Boolean,
-    aiIntent: Boolean,
+    aiKey: {
+      type: String,
+      default: "",
+    },
+    aiModel: {
+      type: String,
+      default: "",
+    },
+    aiEndpoint: {
+      type: String,
+      default: "",
+    },
+    aiPrompt: {
+      type: String,
+      default: "",
+    },
+    aiAutoAnalyse: {
+      type: Boolean,
+      default: false,
+    },
+    aiScanNotes: {
+      type: Boolean,
+      default: true,
+    },
+    aiIntent: {
+      type: Boolean,
+      default: false,
+    },
 
     // General
-    companyName: String,
+    companyName: {
+      type: String,
+      default: "",
+    },
     currency: {
       type: String,
       default: "₹",

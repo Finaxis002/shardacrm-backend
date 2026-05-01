@@ -1,6 +1,8 @@
 import Lead from "../models/Lead.model.js";
 import User from "../models/User.model.js";
 import Activity from "../models/Activity.model.js";
+import Payment from "../models/Payment.model.js";
+import Reminder from "../models/Reminder.model.js";
 import ApiError from "../utils/apiError.js";
 import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
@@ -101,12 +103,19 @@ export const createLead = asyncHandler(async (req, res) => {
     product,
     closeDate,
     priority,
+    note,
     assignedTo,
+    coAssignees = [],
+    activity,
+    recording,
+    payment,
+    reminder,
     customFields,
   } = req.body;
 
   const organization = req.user.organization;
   const createdBy = req.user._id;
+  const assignedUserId = assignedTo || createdBy;
 
   // Check if lead with same phone already exists in organization
   const existingLead = await Lead.findOne({ phone, organization });
@@ -115,12 +124,12 @@ export const createLead = asyncHandler(async (req, res) => {
   }
 
   // Validate assignedTo user exists
-  if (assignedTo) {
-    const user = await User.findOne({ _id: assignedTo, organization });
-    if (!user) {
-      throw new ApiError(400, "Assigned user not found in organization");
-    }
+  const assignedUser = await User.findOne({ _id: assignedUserId, organization });
+  if (!assignedUser) {
+    throw new ApiError(400, "Assigned user not found in organization");
   }
+
+  const productValue = Array.isArray(product) ? product.join(", ") : product || "";
 
   const lead = new Lead({
     name,
@@ -130,10 +139,11 @@ export const createLead = asyncHandler(async (req, res) => {
     source: source || "Other",
     status,
     dealValue,
-    product: product || [],
+    product: productValue,
     closeDate,
-    priority: priority || "Medium",
-    assignedTo,
+    priority: priority || "Normal",
+    assignedTo: assignedUserId,
+    coAssignees,
     organization,
     createdBy,
     customFields: customFields || {},
@@ -142,14 +152,96 @@ export const createLead = asyncHandler(async (req, res) => {
   await lead.save();
   await lead.populate("assignedTo", "name email");
 
-  // Log activity
-  await Activity.create({
-    leadId: lead._id,
-    type: "note",
-    text: `Lead created by ${req.user.name}`,
-    createdBy: req.user._id,
-    organization,
-  });
+  const activityPromises = [];
+  if (note) {
+    activityPromises.push(
+      Activity.create({
+        leadId: lead._id,
+        type: "Note",
+        text: note,
+        createdBy: req.user._id,
+        organization,
+      }),
+    );
+  } else {
+    activityPromises.push(
+      Activity.create({
+        leadId: lead._id,
+        type: "Note",
+        text: `Lead created by ${req.user.name}`,
+        createdBy: req.user._id,
+        organization,
+      }),
+    );
+  }
+
+  if (activity && activity.type) {
+    const activityData = {
+      leadId: lead._id,
+      type: activity.type,
+      text: activity.text || "",
+      createdBy: req.user._id,
+      organization,
+      notifiedUsers: activity.notifiedUsers || [],
+    };
+
+    if (activity.type === "Call") {
+      activityData.callDuration = activity.callDuration;
+      activityData.callDirection = activity.callDirection;
+      activityData.callOutcome = activity.callOutcome;
+    }
+    if (activity.type === "Task") {
+      activityData.taskDueDate = activity.taskDueDate;
+      activityData.taskAssignedTo = activity.taskAssignedTo;
+      activityData.taskCompleted = false;
+    }
+
+    activityPromises.push(Activity.create(activityData));
+  }
+
+  if (recording && (recording.label || recording.url)) {
+    activityPromises.push(
+      Activity.create({
+        leadId: lead._id,
+        type: "Recording",
+        text: recording.label || "Recording uploaded",
+        recordingUrl: recording.url,
+        createdBy: req.user._id,
+        organization,
+      }),
+    );
+  }
+
+  if (payment && payment.amount !== undefined) {
+    const paymentItem = new Payment({
+      leadId: lead._id,
+      amount: payment.amount,
+      currency: "INR",
+      paymentMode: payment.paymentMode,
+      status: payment.status || "Paid",
+      reference: payment.reference,
+      paymentDate: payment.paymentDate || new Date(),
+      recordedBy: req.user._id,
+      organization,
+    });
+    activityPromises.push(paymentItem.save());
+  }
+
+  if (reminder && reminder.reminderDate) {
+    const reminderItem = new Reminder({
+      leadId: lead._id,
+      type: reminder.type,
+      assignedTo: reminder.assignedTo,
+      reminderDate: reminder.reminderDate,
+      reminderTime: reminder.reminderTime,
+      note: reminder.note,
+      notifyUsers: reminder.notifyUsers || [],
+      organization,
+    });
+    activityPromises.push(reminderItem.save());
+  }
+
+  await Promise.all(activityPromises);
 
   logger.info(`Lead created: ${lead._id} by user ${createdBy}`);
 
@@ -171,32 +263,86 @@ export const updateLead = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Lead not found");
   }
 
-  // Check permission - only assigned user or admin can edit
-  if (
-    req.user.role !== "admin" &&
-    !lead.assignedTo.equals(userId) &&
-    !lead.coAssignees.includes(userId)
-  ) {
+  const canEditAny =
+    req.user.role === "admin" ||
+    (req.user.permissions && req.user.permissions.includes("edit_any_lead"));
+  const isAssignee = lead.assignedTo && lead.assignedTo.equals(userId);
+  const isCoAssignee = lead.coAssignees.some((user) => user.equals(userId));
+  if (!canEditAny && !isAssignee && !isCoAssignee) {
     throw new ApiError(403, "Not authorized to update this lead");
   }
 
-  // Track status change
   const oldStatus = lead.status;
-  const newStatus = req.body.status || oldStatus;
+  const oldAssignee = lead.assignedTo && lead.assignedTo.toString();
 
-  // Update fields
-  Object.assign(lead, req.body);
+  const allowedFields = [
+    "name",
+    "phone",
+    "email",
+    "city",
+    "source",
+    "status",
+    "dealValue",
+    "product",
+    "closeDate",
+    "priority",
+    "customFields",
+  ];
+
+  allowedFields.forEach((field) => {
+    if (req.body[field] !== undefined) {
+      lead[field] = req.body[field];
+    }
+  });
+
+  if (req.body.assignedTo !== undefined) {
+    const hasAssignPermission =
+      req.user.role === "admin" ||
+      (req.user.permissions && req.user.permissions.includes("assign_leads"));
+
+    if (!hasAssignPermission) {
+      throw new ApiError(403, "Not authorized to reassign this lead");
+    }
+
+    const assignee = await User.findOne({ _id: req.body.assignedTo, organization });
+    if (!assignee) {
+      throw new ApiError(400, "Assigned user not found in organization");
+    }
+
+    lead.assignedTo = req.body.assignedTo;
+  }
+
+  if (req.body.product !== undefined) {
+    lead.product = Array.isArray(req.body.product)
+      ? req.body.product.join(", ")
+      : req.body.product;
+  }
+
   await lead.save();
   await lead.populate("assignedTo", "name email");
 
-  // Log status change activity
-  if (oldStatus !== newStatus) {
+  if (oldStatus !== lead.status) {
     await Activity.create({
       leadId: lead._id,
       type: "note",
-      text: `Status changed from ${oldStatus} to ${newStatus}`,
+      text: `Status changed from ${oldStatus} to ${lead.status}`,
       statusFrom: oldStatus,
-      statusTo: newStatus,
+      statusTo: lead.status,
+      createdBy: userId,
+      organization,
+    });
+  }
+
+  if (req.body.assignedTo !== undefined && oldAssignee !== String(req.body.assignedTo)) {
+    const newUser = await User.findOne({ _id: req.body.assignedTo, organization });
+    const previousName = oldAssignee
+      ? (await User.findById(oldAssignee))?.name
+      : "Unassigned";
+
+    await Activity.create({
+      leadId: lead._id,
+      type: "note",
+      text: `Lead reassigned from ${previousName} to ${newUser?.name || "Unknown"}`,
       createdBy: userId,
       organization,
     });

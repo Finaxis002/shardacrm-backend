@@ -16,6 +16,7 @@ export const updateUserValidator = Joi.object({
   name: Joi.string().min(2).max(50),
   phone: Joi.string().regex(/^[0-9]{10}$/),
   role: Joi.string().valid("admin", "manager", "tl", "exec", "viewer"),
+  password: Joi.string().min(6).max(30),
 });
 
 export const updateUserRoleValidator = Joi.object({
