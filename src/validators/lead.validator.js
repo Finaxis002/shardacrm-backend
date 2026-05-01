@@ -43,16 +43,18 @@ export const createLeadValidator = Joi.object({
     reference: Joi.string().optional().allow(""),
     paymentDate: Joi.date().optional(),
   }).optional(),
-  reminder: Joi.object({
-    type: Joi.string()
-      .valid("Call", "Email", "Meeting", "Follow-up", "Payment")
-      .required(),
-    assignedTo: Joi.string().required(),
-    reminderDate: Joi.date().required(),
-    reminderTime: Joi.string().optional().allow(""),
-    note: Joi.string().optional().allow(""),
-    notifyUsers: Joi.array().items(Joi.string()).optional(),
-  }).optional(),
+reminder: Joi.object({
+  type: Joi.string()
+    .valid("Call", "Email", "Meeting", "Follow-up", "Payment")
+    .required(),
+  assignedTo: Joi.string().required(),
+  reminderDate: Joi.alternatives()
+    .try(Joi.date(), Joi.string())
+    .required(),                            
+  reminderTime: Joi.string().optional().allow(""),
+  note: Joi.string().optional().allow(""),
+  notifyUsers: Joi.array().items(Joi.string()).optional(),
+}).optional(),
   customFields: Joi.object().optional(),
 });
 

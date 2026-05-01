@@ -227,21 +227,30 @@ export const createLead = asyncHandler(async (req, res) => {
     activityPromises.push(paymentItem.save());
   }
 
-  if (reminder && reminder.reminderDate) {
-    const reminderItem = new Reminder({
-      leadId: lead._id,
-      type: reminder.type,
-      assignedTo: reminder.assignedTo,
-      reminderDate: reminder.reminderDate,
-      reminderTime: reminder.reminderTime,
-      note: reminder.note,
-      notifyUsers: reminder.notifyUsers || [],
-      organization,
-    });
-    activityPromises.push(reminderItem.save());
-  }
+if (reminder && reminder.reminderDate) {
+  const reminderItem = new Reminder({
+    leadId: lead._id,
+    type: reminder.type || "Call",          
+    assignedTo: reminder.assignedTo || createdBy, 
+    reminderDate: new Date(reminder.reminderDate),
+    reminderTime: reminder.reminderTime || "10:00",
+    note: reminder.note || "",
+    notifyUsers: reminder.notifyUsers || [],
+    organization,
+  });
+  activityPromises.push(reminderItem.save());
+}
 
-  await Promise.all(activityPromises);
+const results = await Promise.allSettled(activityPromises);
+results.forEach((r, i) => {
+  if (r.status === "rejected") {
+    // console.error(`❌ Promise[${i}] failed:`, r.reason); 
+    // console.error(`❌ Error message:`, r.reason?.message);
+    // console.error(`❌ Error stack:`, r.reason?.stack);
+  } else {
+    // console.log(`✅ Promise[${i}] success:`, r.value?._id || "ok");
+  }
+});
 
   logger.info(`Lead created: ${lead._id} by user ${createdBy}`);
 
@@ -347,6 +356,32 @@ export const updateLead = asyncHandler(async (req, res) => {
       organization,
     });
   }
+
+  if (req.body.reminder && req.body.reminder.reminderDate) {
+  const reminderData = req.body.reminder;
+  
+  if (reminderData._id) {
+    await Reminder.findByIdAndUpdate(reminderData._id, {
+      type: reminderData.type,
+      assignedTo: reminderData.assignedTo,
+      reminderDate: new Date(reminderData.reminderDate),
+      reminderTime: reminderData.reminderTime,
+      note: reminderData.note,
+      notifyUsers: reminderData.notifyUsers || [],
+    });
+  } else {
+    await Reminder.create({
+      leadId: lead._id,
+      type: reminderData.type || "Call",
+      assignedTo: reminderData.assignedTo || userId,
+      reminderDate: new Date(reminderData.reminderDate),
+      reminderTime: reminderData.reminderTime || "10:00",
+      note: reminderData.note || "",
+      notifyUsers: reminderData.notifyUsers || [],
+      organization,
+    });
+  }
+}
 
   logger.info(`Lead updated: ${id} by user ${userId}`);
 
