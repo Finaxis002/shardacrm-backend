@@ -24,29 +24,6 @@ app.use(mongoSanitize());
 // CORS
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  const allowedOrigins = Array.isArray(corsOptions.origin)
-    ? corsOptions.origin
-    : [corsOptions.origin];
-
-  if (origin && allowedOrigins.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  }
-
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
-  );
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-
-  next();
-});
 
 // Cookie parser
 app.use(cookieParser());
