@@ -14,25 +14,14 @@ import logger from "../utils/logger.js";
 export const getReminders = asyncHandler(async (req, res) => {
   const { page, limit, leadId, status } = req.query;
   const organization = req.user.organization;
-  const userId = req.user._id;
 
-  const filter = {
-    organization,
-    $or: [{ assignedTo: userId }, { notifyUsers: userId }],
-  };
+  let filter = { organization };
 
   if (leadId) filter.leadId = leadId;
   if (status === "pending") filter.isDone = false;
   if (status === "completed") filter.isDone = true;
 
-  const {
-    skip,
-    limit: pageLimit,
-    page: pageNum,
-  } = parsePagination({
-    page,
-    limit,
-  });
+  const { skip, limit: pageLimit, page: pageNum } = parsePagination({ page, limit });
 
   const reminders = await Reminder.find(filter)
     .skip(skip)
@@ -45,17 +34,9 @@ export const getReminders = asyncHandler(async (req, res) => {
 
   const total = await Reminder.countDocuments(filter);
 
-  logger.info(`Fetched ${reminders.length} reminders for user`);
-
-  res
-    .status(200)
-    .json(
-      new ApiResponse(
-        200,
-        formatPaginatedResponse(reminders, total, pageNum, pageLimit),
-        "Reminders fetched successfully",
-      ),
-    );
+  res.status(200).json(
+    new ApiResponse(200, formatPaginatedResponse(reminders, total, pageNum, pageLimit), "Reminders fetched successfully"),
+  );
 });
 
 /**
@@ -227,7 +208,6 @@ export const markReminderDone = asyncHandler(async (req, res) => {
  */
 export const getTodayReminders = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
-  const userId = req.user._id;
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -236,7 +216,7 @@ export const getTodayReminders = asyncHandler(async (req, res) => {
 
   const reminders = await Reminder.find({
     organization,
-    assignedTo: userId,
+    // ✅ assignedTo filter hata diya — organization ke saare aaj ke reminders
     isDone: false,
     reminderDate: { $gte: today, $lt: tomorrow },
   })
@@ -245,9 +225,7 @@ export const getTodayReminders = asyncHandler(async (req, res) => {
     .sort({ reminderTime: 1 })
     .lean();
 
-  res
-    .status(200)
-    .json(
-      new ApiResponse(200, reminders, "Today's reminders fetched successfully"),
-    );
+  res.status(200).json(
+    new ApiResponse(200, reminders, "Today's reminders fetched successfully"),
+  );
 });
