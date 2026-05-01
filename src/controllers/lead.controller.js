@@ -87,12 +87,16 @@ export const getLead = asyncHandler(async (req, res) => {
     .sort({ createdAt: -1 })
     .lean();
 
+  const payments = await Payment.find({ leadId: lead._id })
+    .sort({ paymentDate: -1, createdAt: -1 })
+    .lean();
+
   res
     .status(200)
     .json(
       new ApiResponse(
         200,
-        { ...lead, activities },
+        { ...lead, activities, payments },
         "Lead fetched successfully",
       ),
     );
@@ -457,29 +461,72 @@ export const updateLead = asyncHandler(async (req, res) => {
     await Activity.create(activityData);
   }
 
+  if (req.body.payment && req.body.payment.amount !== undefined) {
+    const paymentPayload = {
+      leadId: lead._id,
+      amount: req.body.payment.amount,
+      currency: "INR",
+      paymentMode: req.body.payment.paymentMode,
+      status: req.body.payment.status || "Paid",
+      reference: req.body.payment.reference,
+      paymentDate: req.body.payment.paymentDate
+        ? new Date(req.body.payment.paymentDate)
+        : new Date(),
+      recordedBy: userId,
+      organization,
+    };
+
+    const existingPayment = await Payment.findOne({ leadId: lead._id }).sort({
+      paymentDate: -1,
+      createdAt: -1,
+    });
+
+    if (existingPayment) {
+      existingPayment.amount = paymentPayload.amount;
+      existingPayment.paymentMode = paymentPayload.paymentMode;
+      existingPayment.status = paymentPayload.status;
+      existingPayment.reference = paymentPayload.reference;
+      existingPayment.paymentDate = paymentPayload.paymentDate;
+      existingPayment.recordedBy = userId;
+      await existingPayment.save();
+    } else {
+      await Payment.create(paymentPayload);
+    }
+  }
+
   if (req.body.reminder && req.body.reminder.reminderDate) {
     const reminderData = req.body.reminder;
 
     if (reminderData._id) {
-      await Reminder.findByIdAndUpdate(reminderData._id, {
+      const updatePayload = {
         type: reminderData.type,
         assignedTo: reminderData.assignedTo,
         reminderDate: new Date(reminderData.reminderDate),
         reminderTime: reminderData.reminderTime,
         note: reminderData.note,
-        notifyUsers: reminderData.notifyUsers || [],
-      });
+        notifyUsers: Array.isArray(reminderData.notifyUsers)
+          ? reminderData.notifyUsers.filter(Boolean)
+          : reminderData.notifyUsers
+            ? [reminderData.notifyUsers]
+            : [],
+      };
+      await Reminder.findByIdAndUpdate(reminderData._id, updatePayload);
     } else {
-      await Reminder.create({
+      const createPayload = {
         leadId: lead._id,
         type: reminderData.type || "Call",
         assignedTo: reminderData.assignedTo || userId,
         reminderDate: new Date(reminderData.reminderDate),
         reminderTime: reminderData.reminderTime || "10:00",
         note: reminderData.note || "",
-        notifyUsers: reminderData.notifyUsers || [],
+        notifyUsers: Array.isArray(reminderData.notifyUsers)
+          ? reminderData.notifyUsers.filter(Boolean)
+          : reminderData.notifyUsers
+            ? [reminderData.notifyUsers]
+            : [],
         organization,
-      });
+      };
+      await Reminder.create(createPayload);
     }
   }
 
