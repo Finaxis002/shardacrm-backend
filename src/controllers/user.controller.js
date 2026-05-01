@@ -6,7 +6,6 @@ import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { formatPaginatedResponse, parsePagination } from "../utils/paginate.js";
 import logger from "../utils/logger.js";
-import bcrypt from "bcryptjs";
 
 /**
  * Get all team members
@@ -113,8 +112,15 @@ export const createTeamMember = asyncHandler(async (req, res) => {
   const { name, email, password, phone, role } = req.body;
   const organization = req.user.organization;
 
+  if (!password) {
+    throw new ApiError(400, "Password is required");
+  }
+
   // Check if user already exists
-  const existingUser = await User.findOne({ email, organization });
+  const existingUser = await User.findOne({
+    email: email.toLowerCase(),
+    organization,
+  });
   if (existingUser) {
     throw new ApiError(
       400,
@@ -122,13 +128,10 @@ export const createTeamMember = asyncHandler(async (req, res) => {
     );
   }
 
-  // Hash password
-  const hashedPassword = await bcrypt.hash(password, 10);
-
   const user = new User({
     name,
-    email,
-    password: hashedPassword,
+    email: email.toLowerCase(),
+    password,
     phone,
     role: role || "viewer",
     organization,
@@ -186,7 +189,7 @@ export const updateUser = asyncHandler(async (req, res) => {
   if (name) user.name = name;
   if (phone) user.phone = phone;
   if (role && req.user.role === "admin") user.role = role;
-  if (password) user.password = await bcrypt.hash(password, 10);
+  if (password) user.password = password;
 
   await user.save();
 

@@ -86,16 +86,76 @@ export const register = asyncHandler(async (req, res) => {
       { name: "Closed", color: "#1a1a18", order: 4 },
     ],
     permissions: {
-      "View all leads": { admin: true, manager: true, tl: false, exec: false, viewer: false },
-      "Add leads": { admin: true, manager: true, tl: true, exec: true, viewer: false },
-      "Edit any lead": { admin: true, manager: true, tl: false, exec: false, viewer: false },
-      "Delete leads": { admin: true, manager: false, tl: false, exec: false, viewer: false },
-      "Assign leads": { admin: true, manager: true, tl: true, exec: false, viewer: false },
-      "Change lead owner": { admin: true, manager: true, tl: false, exec: false, viewer: false },
-      "Record payments": { admin: true, manager: true, tl: false, exec: false, viewer: false },
-      "Import from sheets": { admin: true, manager: true, tl: false, exec: false, viewer: false },
-      "View team": { admin: true, manager: true, tl: true, exec: false, viewer: false },
-      "Admin panel": { admin: true, manager: false, tl: false, exec: false, viewer: false },
+      "View all leads": {
+        admin: true,
+        manager: true,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
+      "Add leads": {
+        admin: true,
+        manager: true,
+        tl: true,
+        exec: true,
+        viewer: false,
+      },
+      "Edit any lead": {
+        admin: true,
+        manager: true,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
+      "Delete leads": {
+        admin: true,
+        manager: false,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
+      "Assign leads": {
+        admin: true,
+        manager: true,
+        tl: true,
+        exec: false,
+        viewer: false,
+      },
+      "Change lead owner": {
+        admin: true,
+        manager: true,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
+      "Record payments": {
+        admin: true,
+        manager: true,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
+      "Import from sheets": {
+        admin: true,
+        manager: true,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
+      "View team": {
+        admin: true,
+        manager: true,
+        tl: true,
+        exec: false,
+        viewer: false,
+      },
+      "Admin panel": {
+        admin: true,
+        manager: false,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
     },
     rbacExecOnly: true,
     rbacCoEditorsCanEdit: true,
@@ -228,4 +288,183 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
   return res
     .status(200)
     .json(new ApiResponse(200, req.user.toJSON(), "Current user fetched"));
+});
+
+// Admin initialization endpoint (one-time setup for production)
+export const initializeAdmin = asyncHandler(async (req, res) => {
+  // Check if any admin already exists
+  const existingAdmin = await User.findOne({ role: "admin" });
+
+  if (existingAdmin) {
+    throw new ApiError(
+      400,
+      "Admin already exists. Initialization cannot be performed.",
+    );
+  }
+
+  // Hardcoded admin credentials
+  const admins = [
+    {
+      name: "Anugrah Sharda",
+      email: "anugrah@sharda.in",
+      password: "admin@123",
+    },
+    {
+      name: "Anunay Sharda",
+      email: "anunay@sharda.in",
+      password: "admin@123",
+    },
+  ];
+
+  const companyName = "Sharda Associates";
+
+  // Create organization
+  const org = await Organization.create({
+    name: companyName,
+    slug: "sharda-associates",
+    owner: null,
+    members: [],
+  });
+
+  // Create all admin users
+  const createdAdmins = [];
+  for (const admin of admins) {
+    const user = await User.create({
+      name: admin.name,
+      email: admin.email.toLowerCase(),
+      password: admin.password,
+      role: "admin",
+      organization: org._id,
+      isActive: true,
+      phone: "+91-9999999999",
+    });
+    createdAdmins.push(user);
+    org.members.push(user._id);
+  }
+
+  // Update organization with owner and members
+  org.owner = createdAdmins[0]._id;
+  await org.save();
+
+  // Create default organization settings
+  await Settings.create({
+    organization: org._id,
+    companyName,
+    distributionMethod: "round_robin",
+    distributionPool: [],
+    rrIndex: 0,
+    pipelineStages: [
+      { name: "New", color: "#6b7280", order: 0 },
+      { name: "Interested", color: "#b86e00", order: 1 },
+      { name: "Details Shared", color: "#6c35de", order: 2 },
+      { name: "Success", color: "#2a7d4f", order: 3 },
+      { name: "Closed", color: "#1a1a18", order: 4 },
+    ],
+    permissions: {
+      "View all leads": {
+        admin: true,
+        manager: true,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
+      "Add leads": {
+        admin: true,
+        manager: true,
+        tl: true,
+        exec: true,
+        viewer: false,
+      },
+      "Edit any lead": {
+        admin: true,
+        manager: true,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
+      "Delete leads": {
+        admin: true,
+        manager: false,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
+      "Assign leads": {
+        admin: true,
+        manager: true,
+        tl: true,
+        exec: false,
+        viewer: false,
+      },
+      "Change lead owner": {
+        admin: true,
+        manager: true,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
+      "Record payments": {
+        admin: true,
+        manager: true,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
+      "Import from sheets": {
+        admin: true,
+        manager: true,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
+      "View team": {
+        admin: true,
+        manager: true,
+        tl: true,
+        exec: false,
+        viewer: false,
+      },
+      "Admin panel": {
+        admin: true,
+        manager: false,
+        tl: false,
+        exec: false,
+        viewer: false,
+      },
+    },
+    rbacExecOnly: true,
+    rbacCoEditorsCanEdit: true,
+    leadColumns: ["name", "phone", "source", "value", "status", "assign"],
+    customColumns: [],
+    gcalConnected: false,
+    gcalUser: "",
+    gmailEnabled: false,
+    gateways: {},
+    defaultGateway: "",
+    paymentLinkExpiry: 48,
+    aiProvider: "",
+    aiKey: "",
+    aiModel: "",
+    aiEndpoint: "",
+    aiPrompt: "",
+    aiAutoAnalyse: false,
+    aiScanNotes: true,
+    aiIntent: false,
+    currency: "₹",
+    timezone: "Asia/Kolkata",
+  });
+
+  return res.status(201).json(
+    new ApiResponse(
+      201,
+      {
+        admins: createdAdmins.map((user) => user.toJSON()),
+        organization: {
+          id: org._id,
+          name: org.name,
+        },
+      },
+      "Admin initialized successfully. Login with credentials: anugrah@sharda.in / admin@123",
+    ),
+  );
 });
