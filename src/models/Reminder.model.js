@@ -38,6 +38,10 @@ const reminderSchema = new mongoose.Schema(
       ref: "Organization",
       required: true,
     },
+    gcalEventId: {
+  type: String,
+  default: "",
+},
     notifyUsers: [
       {
         type: mongoose.Schema.Types.ObjectId,

@@ -5,6 +5,97 @@ import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { formatPaginatedResponse, parsePagination } from "../utils/paginate.js";
 import logger from "../utils/logger.js";
+import { google } from "googleapis";
+import Settings from "../models/Settings.model.js";
+
+// ── Google Calendar Helper ────────────────────────────────────────────────────
+
+const makeOAuth2Client = () =>
+  new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI,
+  );
+
+const createGcalEvent = async (organization, reminder, lead) => {
+  try {
+    const settings = await Settings.findOne({ organization });
+
+    // Only proceed if GCal is connected
+    if (!settings?.gcalConnected || !settings?.gcalTokens?.access_token) return null;
+
+    const client = makeOAuth2Client();
+    client.setCredentials({
+      access_token:  settings.gcalTokens.access_token,
+      refresh_token: settings.gcalTokens.refresh_token,
+      expiry_date:   settings.gcalTokens.expiry_date,
+      token_type:    settings.gcalTokens.token_type,
+      scope:         settings.gcalTokens.scope,
+    });
+
+    // Auto-persist refreshed tokens
+    client.on("tokens", async (tokens) => {
+      const patch = {
+        "gcalTokens.access_token": tokens.access_token,
+        "gcalTokens.expiry_date":  tokens.expiry_date,
+      };
+      if (tokens.refresh_token) patch["gcalTokens.refresh_token"] = tokens.refresh_token;
+      await Settings.findOneAndUpdate({ organization }, { $set: patch });
+    });
+
+    const timezone = settings.timezone || "Asia/Kolkata";
+
+    // Build start datetime from reminderDate + reminderTime
+    const dateStr = reminder.reminderDate.toISOString().split("T")[0]; // "2026-05-10"
+    const timeStr = reminder.reminderTime || "09:00";                   // "14:30"
+    const startDateTime = new Date(`${dateStr}T${timeStr}:00`);
+    const endDateTime   = new Date(startDateTime.getTime() + 60 * 60 * 1000); // +1 hour
+
+    const eventTitle = `${reminder.type || "Follow-up"}: ${lead.name}`;
+    const description = [
+      `Lead: ${lead.name}`,
+      `Phone: ${lead.phone || "N/A"}`,
+      `Type: ${reminder.type || "Follow-up"}`,
+      reminder.note ? `Note: ${reminder.note}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const calendar = google.calendar({ version: "v3", auth: client });
+
+    const { data } = await calendar.events.insert({
+      calendarId: "primary",
+      resource: {
+        summary:     eventTitle,
+        description,
+        start: { dateTime: startDateTime.toISOString(), timeZone: timezone },
+        end:   { dateTime: endDateTime.toISOString(),   timeZone: timezone },
+        reminders: {
+          useDefault: false,
+          overrides: [
+            { method: "popup", minutes: 30 },
+            { method: "email", minutes: 60 },
+          ],
+        },
+        extendedProperties: {
+          private: {
+            reminderId: reminder._id.toString(),
+            leadId:     lead._id.toString(),
+          },
+        },
+      },
+    });
+
+    logger.info(`GCal event created for reminder ${reminder._id}: ${data.id}`);
+    return data.id;
+  } catch (err) {
+    // Don't fail reminder creation if GCal fails
+    logger.warn(`GCal event creation failed (non-fatal): ${err.message}`);
+    return null;
+  }
+};
+
+// ── Controllers ───────────────────────────────────────────────────────────────
 
 /**
  * Get all reminders
@@ -58,22 +149,19 @@ export const getReminder = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Reminder not found");
   }
 
-  res
-    .status(200)
-    .json(new ApiResponse(200, reminder, "Reminder fetched successfully"));
+  res.status(200).json(new ApiResponse(200, reminder, "Reminder fetched successfully"));
 });
 
 /**
- * Create reminder
+ * Create reminder + auto-create Google Calendar event if GCal connected
  * @route POST /api/v1/reminders
  * @access Private
  */
 export const createReminder = asyncHandler(async (req, res) => {
-  const { leadId, type, assignedTo, reminderDate, reminderTime, note } =
-    req.body;
+  const { leadId, type, assignedTo, reminderDate, reminderTime, note } = req.body;
 
   const organization = req.user.organization;
-  const createdBy = req.user._id;
+  const createdBy    = req.user._id;
 
   // Validate lead exists
   const lead = await Lead.findOne({ _id: leadId, organization });
@@ -84,7 +172,7 @@ export const createReminder = asyncHandler(async (req, res) => {
   const reminder = new Reminder({
     leadId,
     type,
-    assignedTo: assignedTo || createdBy,
+    assignedTo:  assignedTo || createdBy,
     reminderDate,
     reminderTime,
     note,
@@ -98,9 +186,21 @@ export const createReminder = asyncHandler(async (req, res) => {
 
   logger.info(`Reminder created: ${reminder._id} for lead ${leadId}`);
 
-  res
-    .status(201)
-    .json(new ApiResponse(201, reminder, "Reminder created successfully"));
+  // ── Auto-create Google Calendar event ──────────────────────────────────────
+  const gcalEventId = await createGcalEvent(organization, reminder, lead);
+  if (gcalEventId) {
+    // Save GCal event ID in reminder for future reference (optional)
+    await Reminder.findByIdAndUpdate(reminder._id, { gcalEventId });
+    reminder.gcalEventId = gcalEventId;
+  }
+
+  res.status(201).json(
+    new ApiResponse(201, reminder, 
+      gcalEventId 
+        ? "Reminder created and synced to Google Calendar ✅" 
+        : "Reminder created successfully"
+    ),
+  );
 });
 
 /**
@@ -130,9 +230,7 @@ export const updateReminder = asyncHandler(async (req, res) => {
 
   logger.info(`Reminder updated: ${id}`);
 
-  res
-    .status(200)
-    .json(new ApiResponse(200, reminder, "Reminder updated successfully"));
+  res.status(200).json(new ApiResponse(200, reminder, "Reminder updated successfully"));
 });
 
 /**
@@ -149,13 +247,26 @@ export const deleteReminder = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Reminder not found");
   }
 
-  await Reminder.findByIdAndDelete(id);
+  // Delete GCal event too if it exists
+  if (reminder.gcalEventId) {
+    try {
+      const settings = await Settings.findOne({ organization });
+      if (settings?.gcalConnected && settings?.gcalTokens?.access_token) {
+        const client = makeOAuth2Client();
+        client.setCredentials(settings.gcalTokens);
+        const calendar = google.calendar({ version: "v3", auth: client });
+        await calendar.events.delete({ calendarId: "primary", eventId: reminder.gcalEventId });
+        logger.info(`GCal event deleted: ${reminder.gcalEventId}`);
+      }
+    } catch (err) {
+      logger.warn(`GCal event delete failed (non-fatal): ${err.message}`);
+    }
+  }
 
+  await Reminder.findByIdAndDelete(id);
   logger.info(`Reminder deleted: ${id}`);
 
-  res
-    .status(200)
-    .json(new ApiResponse(200, null, "Reminder deleted successfully"));
+  res.status(200).json(new ApiResponse(200, null, "Reminder deleted successfully"));
 });
 
 /**
@@ -190,15 +301,9 @@ export const markReminderDone = asyncHandler(async (req, res) => {
 
   logger.info(`Reminder marked ${isDone ? "done" : "pending"}: ${id}`);
 
-  res
-    .status(200)
-    .json(
-      new ApiResponse(
-        200,
-        reminder,
-        `Reminder marked ${isDone ? "done" : "pending"} successfully`,
-      ),
-    );
+  res.status(200).json(
+    new ApiResponse(200, reminder, `Reminder marked ${isDone ? "done" : "pending"} successfully`),
+  );
 });
 
 /**
@@ -216,7 +321,6 @@ export const getTodayReminders = asyncHandler(async (req, res) => {
 
   const reminders = await Reminder.find({
     organization,
-    // ✅ assignedTo filter hata diya — organization ke saare aaj ke reminders
     isDone: false,
     reminderDate: { $gte: today, $lt: tomorrow },
   })
