@@ -8,6 +8,8 @@ import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { formatPaginatedResponse, parsePagination } from "../utils/paginate.js";
 import logger from "../utils/logger.js";
+import Settings from "../models/Settings.model.js";
+import { google } from "googleapis";
 
 /**
  * Get all leads with filters and pagination
@@ -101,6 +103,118 @@ export const getLead = asyncHandler(async (req, res) => {
       ),
     );
 });
+
+
+// ── Google Calendar Helpers ─────────────────────────────────────────────
+
+const makeOAuth2Client = () =>
+  new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI,
+  );
+
+const createGcalEventForReminder = async (organization, reminderDoc, lead) => {
+  try {
+    const settings = await Settings.findOne({ organization });
+    if (!settings?.gcalConnected || !settings?.gcalTokens?.access_token) return null;
+
+    const client = makeOAuth2Client();
+    client.setCredentials({
+      access_token:  settings.gcalTokens.access_token,
+      refresh_token: settings.gcalTokens.refresh_token,
+      expiry_date:   settings.gcalTokens.expiry_date,
+      token_type:    settings.gcalTokens.token_type,
+      scope:         settings.gcalTokens.scope,
+    });
+
+    client.on("tokens", async (tokens) => {
+      const patch = {
+        "gcalTokens.access_token": tokens.access_token,
+        "gcalTokens.expiry_date":  tokens.expiry_date,
+      };
+      if (tokens.refresh_token) patch["gcalTokens.refresh_token"] = tokens.refresh_token;
+      await Settings.findOneAndUpdate({ organization }, { $set: patch });
+    });
+
+    const timezone = settings.timezone || "Asia/Kolkata";
+    const dateStr  = new Date(reminderDoc.reminderDate).toISOString().split("T")[0];
+    const timeStr  = reminderDoc.reminderTime || "09:00";
+    const start    = new Date(`${dateStr}T${timeStr}:00`);
+    const end      = new Date(start.getTime() + 60 * 60 * 1000);
+
+    const calendar = google.calendar({ version: "v3", auth: client });
+    const { data } = await calendar.events.insert({
+      calendarId: "primary",
+      resource: {
+        summary:     `${reminderDoc.type || "Follow-up"}: ${lead.name}`,
+        description: `Lead: ${lead.name}\nPhone: ${lead.phone || "N/A"}\nType: ${reminderDoc.type || "Follow-up"}\nNote: ${reminderDoc.note || ""}`,
+        start: { dateTime: start.toISOString(), timeZone: timezone },
+        end:   { dateTime: end.toISOString(),   timeZone: timezone },
+        reminders: {
+          useDefault: false,
+          overrides: [
+            { method: "popup", minutes: 30 },
+            { method: "email", minutes: 60 },
+          ],
+        },
+        extendedProperties: { private: { reminderId: reminderDoc._id.toString(), leadId: lead._id.toString() } },
+      },
+    });
+
+    logger.info(`GCal event created for reminder ${reminderDoc._id}: ${data.id}`);
+    return data.id;
+  } catch (err) {
+    logger.warn(`GCal event creation failed: ${err.message}`);
+    return null;
+  }
+};
+
+const updateGcalEventForReminder = async (organization, reminderDoc, lead) => {
+  if (!reminderDoc.gcalEventId) return null;
+  try {
+    const settings = await Settings.findOne({ organization });
+    if (!settings?.gcalConnected || !settings?.gcalTokens?.access_token) return null;
+
+    const client = makeOAuth2Client();
+    client.setCredentials({
+      access_token:  settings.gcalTokens.access_token,
+      refresh_token: settings.gcalTokens.refresh_token,
+      expiry_date:   settings.gcalTokens.expiry_date,
+    });
+
+    client.on("tokens", async (tokens) => {
+      const patch = { "gcalTokens.access_token": tokens.access_token, "gcalTokens.expiry_date": tokens.expiry_date };
+      if (tokens.refresh_token) patch["gcalTokens.refresh_token"] = tokens.refresh_token;
+      await Settings.findOneAndUpdate({ organization }, { $set: patch });
+    });
+
+    const timezone = settings.timezone || "Asia/Kolkata";
+    const dateStr = new Date(reminderDoc.reminderDate).toISOString().split("T")[0];
+    const timeStr = reminderDoc.reminderTime || "09:00";
+    const start = new Date(`${dateStr}T${timeStr}:00`);
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+
+    const calendar = google.calendar({ version: "v3", auth: client });
+    const { data } = await calendar.events.update({
+      calendarId: "primary",
+      eventId: reminderDoc.gcalEventId,
+      resource: {
+        summary: `${reminderDoc.type || "Follow-up"}: ${lead.name}`,
+        description: `Lead: ${lead.name}\nPhone: ${lead.phone || "N/A"}\nType: ${reminderDoc.type || "Follow-up"}\nNote: ${reminderDoc.note || ""}`,
+        start: { dateTime: start.toISOString(), timeZone: timezone },
+        end: { dateTime: end.toISOString(), timeZone: timezone },
+        reminders: { useDefault: false, overrides: [{ method: "popup", minutes: 30 }, { method: "email", minutes: 60 }] },
+      },
+    });
+
+    logger.info(`GCal event updated for reminder ${reminderDoc._id}`);
+    return data.id;
+  } catch (err) {
+    logger.warn(`GCal event update failed: ${err.message}`);
+    return null;
+  }
+};
 
 /**
  * Create new lead
@@ -255,19 +369,25 @@ export const createLead = asyncHandler(async (req, res) => {
     activityPromises.push(paymentItem.save());
   }
 
-  if (reminder && reminder.reminderDate) {
-    const reminderItem = new Reminder({
-      leadId: lead._id,
-      type: reminder.type || "Call",
-      assignedTo: reminder.assignedTo || createdBy,
-      reminderDate: new Date(reminder.reminderDate),
-      reminderTime: reminder.reminderTime || "10:00",
-      note: reminder.note || "",
-      notifyUsers: reminder.notifyUsers || [],
-      organization,
-    });
-    activityPromises.push(reminderItem.save());
+if (reminder && reminder.reminderDate) {
+  const reminderItem = new Reminder({
+    leadId: lead._id,
+    type: reminder.type || "Call",
+    assignedTo: reminder.assignedTo || createdBy,
+    reminderDate: new Date(reminder.reminderDate),
+    reminderTime: reminder.reminderTime || "10:00",
+    note: reminder.note || "",
+    notifyUsers: reminder.notifyUsers || [],
+    organization,
+  });
+  await reminderItem.save();
+
+  // ✅ Google Calendar event create karo
+  const gcalEventId = await createGcalEventForReminder(organization, reminderItem, lead);
+  if (gcalEventId) {
+    await Reminder.findByIdAndUpdate(reminderItem._id, { gcalEventId });
   }
+}
 
   const results = await Promise.allSettled(activityPromises);
   results.forEach((r, i) => {
@@ -495,40 +615,53 @@ export const updateLead = asyncHandler(async (req, res) => {
   }
 
   if (req.body.reminder && req.body.reminder.reminderDate) {
-    const reminderData = req.body.reminder;
+  const reminderData = req.body.reminder;
 
-    if (reminderData._id) {
-      const updatePayload = {
-        type: reminderData.type,
-        assignedTo: reminderData.assignedTo,
-        reminderDate: new Date(reminderData.reminderDate),
-        reminderTime: reminderData.reminderTime,
-        note: reminderData.note,
-        notifyUsers: Array.isArray(reminderData.notifyUsers)
-          ? reminderData.notifyUsers.filter(Boolean)
-          : reminderData.notifyUsers
-            ? [reminderData.notifyUsers]
-            : [],
-      };
-      await Reminder.findByIdAndUpdate(reminderData._id, updatePayload);
-    } else {
-      const createPayload = {
-        leadId: lead._id,
-        type: reminderData.type || "Call",
-        assignedTo: reminderData.assignedTo || userId,
-        reminderDate: new Date(reminderData.reminderDate),
-        reminderTime: reminderData.reminderTime || "10:00",
-        note: reminderData.note || "",
-        notifyUsers: Array.isArray(reminderData.notifyUsers)
-          ? reminderData.notifyUsers.filter(Boolean)
-          : reminderData.notifyUsers
-            ? [reminderData.notifyUsers]
-            : [],
-        organization,
-      };
-      await Reminder.create(createPayload);
+  if (reminderData._id) {
+    // 🔁 Update existing reminder
+    const existingReminder = await Reminder.findById(reminderData._id);
+    if (existingReminder) {
+      const oldDate = existingReminder.reminderDate;
+      const oldTime = existingReminder.reminderTime;
+
+      existingReminder.type = reminderData.type;
+      existingReminder.assignedTo = reminderData.assignedTo;
+      existingReminder.reminderDate = new Date(reminderData.reminderDate);
+      existingReminder.reminderTime = reminderData.reminderTime;
+      existingReminder.note = reminderData.note;
+      existingReminder.notifyUsers = Array.isArray(reminderData.notifyUsers)
+        ? reminderData.notifyUsers.filter(Boolean)
+        : reminderData.notifyUsers ? [reminderData.notifyUsers] : [];
+      await existingReminder.save();
+
+      // Agar date/time change hua hai toh GCal event update karo
+      const dateChanged = oldDate.toDateString() !== existingReminder.reminderDate.toDateString();
+      const timeChanged = oldTime !== existingReminder.reminderTime;
+      if ((dateChanged || timeChanged) && existingReminder.gcalEventId) {
+        await updateGcalEventForReminder(organization, existingReminder, lead);
+      }
+    }
+  } else {
+    // 🆕 Create new reminder
+    const newReminder = await Reminder.create({
+      leadId: lead._id,
+      type: reminderData.type || "Call",
+      assignedTo: reminderData.assignedTo || userId,
+      reminderDate: new Date(reminderData.reminderDate),
+      reminderTime: reminderData.reminderTime || "10:00",
+      note: reminderData.note || "",
+      notifyUsers: Array.isArray(reminderData.notifyUsers)
+        ? reminderData.notifyUsers.filter(Boolean)
+        : reminderData.notifyUsers ? [reminderData.notifyUsers] : [],
+      organization,
+    });
+
+    const gcalEventId = await createGcalEventForReminder(organization, newReminder, lead);
+    if (gcalEventId) {
+      await Reminder.findByIdAndUpdate(newReminder._id, { gcalEventId });
     }
   }
+}
 
   logger.info(`Lead updated: ${id} by user ${userId}`);
 
@@ -544,7 +677,6 @@ export const deleteLead = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const organization = req.user.organization;
 
-  // Check permission - only admin or lead owner can delete
   const lead = await Lead.findOne({ _id: id, organization });
   if (!lead) {
     throw new ApiError(404, "Lead not found");
@@ -554,12 +686,44 @@ export const deleteLead = asyncHandler(async (req, res) => {
     throw new ApiError(403, "Not authorized to delete this lead");
   }
 
-  await Lead.findByIdAndDelete(id);
 
-  // Delete related activities
+  const reminders = await Reminder.find({ leadId: id, organization });
+
+  for (const reminder of reminders) {
+    if (reminder.gcalEventId) {
+      try {
+        const settings = await Settings.findOne({ organization });
+        if (settings?.gcalConnected && settings?.gcalTokens?.access_token) {
+          const client = new google.auth.OAuth2(
+            process.env.GOOGLE_CLIENT_ID,
+            process.env.GOOGLE_CLIENT_SECRET,
+            process.env.GOOGLE_REDIRECT_URI,
+          );
+          client.setCredentials({
+            access_token:  settings.gcalTokens.access_token,
+            refresh_token: settings.gcalTokens.refresh_token,
+            expiry_date:   settings.gcalTokens.expiry_date,
+          });
+          const calendar = google.calendar({ version: "v3", auth: client });
+          await calendar.events.delete({
+            calendarId: "primary",
+            eventId: reminder.gcalEventId,
+          });
+          logger.info(`GCal event ${reminder.gcalEventId} deleted for reminder ${reminder._id}`);
+        }
+      } catch (err) {
+        logger.warn(`Failed to delete GCal event for reminder ${reminder._id}: ${err.message}`);
+      }
+    }
+  }
+
+  await Reminder.deleteMany({ leadId: id });
+
+  await Lead.findByIdAndDelete(id);
+  
   await Activity.deleteMany({ leadId: id });
 
-  logger.info(`Lead deleted: ${id} by user ${req.user._id}`);
+  logger.info(`Lead and associated reminders deleted: ${id} by user ${req.user._id}`);
 
   res.status(200).json(new ApiResponse(200, null, "Lead deleted successfully"));
 });
