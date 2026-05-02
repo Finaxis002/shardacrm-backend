@@ -112,46 +112,61 @@ const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organizatio
     }
 
     const phoneClean = String(leadData.phone).trim();
-    const existing = await Lead.findOne({ phone: phoneClean, organization });
-    if (existing) { 
-      console.log("Skipped - duplicate phone:", phoneClean);
-      skipped++; 
-      continue; 
-    }
+  
+const existing = await Lead.findOne({ phone: phoneClean, organization });
+console.log("Phone check:", phoneClean, "| Existing found:", !!existing);
+const emailRaw = String(leadData.email || "").trim().toLowerCase();
+const emailRegex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
+const validEmail = emailRaw && emailRegex.test(emailRaw) ? emailRaw : undefined;
 
-    const emailRaw = String(leadData.email || "").trim().toLowerCase();
-    const emailRegex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
-    const validEmail = emailRaw && emailRegex.test(emailRaw) ? emailRaw : undefined;
+const sourceRaw = String(leadData.source || "").trim();
 
-    const sourceRaw = String(leadData.source || "").trim();
+if (existing) {
+  existing.status = "Repeat";
+  existing.isDuplicate = true;
+  await existing.save();
+  console.log("Updated lead updatedAt:", existing.updatedAt); 
+  await Activity.create({
+    leadId:       existing._id,
+    type:         "Note",
+    text:         "Duplicate entry detected in Google Sheet — status set to Repeat",
+    createdBy,
+    organization,
+  });
 
-    const lead = new Lead({
-      name:       String(leadData.name).trim(),
-      phone:      phoneClean,
-      email:      validEmail,
-      city:       leadData.city || "",
-      source:     VALID_SOURCES.includes(sourceRaw) ? sourceRaw : "Google Sheet",
-      status:     leadData.status || "New",
-      dealValue:  Number(leadData.dealValue) || 0,
-      product:    leadData.product || "",
-      priority:   normalizePriority(leadData.priority),
-      closeDate:  parseDate(leadData.closeDate),
-      assignedTo: assignedTo || createdBy,
-      organization,
-      createdBy,
-    });
+  imported++;
+  continue;
+}
 
-    await lead.save();
+// 👇 Naya lead banao agar exist nahi karta
+const lead = new Lead({
+  name:       String(leadData.name).trim(),
+  phone:      phoneClean,
+  email:      validEmail,
+  city:       leadData.city || "",
+  source:     VALID_SOURCES.includes(sourceRaw) ? sourceRaw : "Google Sheet",
+  status:     leadData.status || "New",
+  dealValue:  Number(leadData.dealValue) || 0,
+  product:    leadData.product || "",
+  priority:   normalizePriority(leadData.priority),
+  closeDate:  parseDate(leadData.closeDate),
+  assignedTo: assignedTo || createdBy,
+  organization,
+  createdBy,
+  isDuplicate: false,
+});
 
-    await Activity.create({
-      leadId:       lead._id,
-      type:         "Note",
-      text:         "Lead imported via Google Sheet auto-sync",
-      createdBy,
-      organization,
-    });
+await lead.save();
 
-    imported++;
+await Activity.create({
+  leadId:       lead._id,
+  type:         "Note",
+  text:         "Lead imported via Google Sheet auto-sync",
+  createdBy,
+  organization,
+});
+
+imported++;
   }
 
   return { imported, skipped };

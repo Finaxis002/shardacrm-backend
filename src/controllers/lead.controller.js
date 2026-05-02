@@ -44,6 +44,7 @@ export const getLeads = asyncHandler(async (req, res) => {
   });
 
   const leads = await Lead.find(filter)
+  .sort({ updatedAt: -1 })
     .skip(skip)
     .limit(pageLimit)
     .populate("assignedTo", "name email")
