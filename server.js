@@ -3,13 +3,16 @@ import app from "./src/app.js";
 import connectDB from "./src/config/db.js";
 import { config } from "./src/config/env.js";
 import logger from "./src/utils/logger.js";
+import { startSheetPoller } from "./jobs/sheetPoller.job.js"; // 👈 ADD
 
 const server = http.createServer(app);
 
-// Connect to database
-connectDB();
-
 const PORT = config.port;
+
+// Connect to database, phir poller start karo
+connectDB().then(() => {                    // 👈 CHANGE
+  startSheetPoller();                       // 👈 ADD
+});
 
 server.listen(PORT, () => {
   logger.info(`Server running on port ${PORT} in ${config.nodeEnv} mode`);
