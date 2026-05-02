@@ -10,7 +10,6 @@ const leadSchema = new mongoose.Schema(
     phone: {
       type: String,
       required: [true, "Phone is required"],
-      unique: true,
       sparse: true,
     },
     email: {
@@ -83,6 +82,14 @@ const leadSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    sheetName: {
+  type: String,
+  default: "",
+},
+isDuplicate: {
+  type: Boolean,
+  default: false,
+},
   },
   { timestamps: true },
 );

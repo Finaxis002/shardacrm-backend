@@ -9,7 +9,7 @@ export const config = {
   apiVersion: process.env.API_VERSION || "v1",
 
   // Database
-  mongoUri: process.env.MONGODB_URI || "mongodb://localhost:27017/shardacrm",
+  mongoUri: process.env.MONGODB_URI || "mongodb+srv://finaxisai:EjMibOyOOojhb2TA@cluster0.jwsdd0d.mongodb.net/shardacrm?appName=Cluster0",
 
   // JWT
   jwtSecret: process.env.JWT_SECRET || "your-secret-key",
