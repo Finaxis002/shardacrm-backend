@@ -9,7 +9,9 @@ export const config = {
   apiVersion: process.env.API_VERSION || "v1",
 
   // Database
-  mongoUri: process.env.MONGODB_URI || "mongodb+srv://finaxisai:EjMibOyOOojhb2TA@cluster0.jwsdd0d.mongodb.net/shardacrm?appName=Cluster0",
+  mongoUri:
+    process.env.MONGODB_URI ||
+    "mongodb+srv://finaxisai:EjMibOyOOojhb2TA@cluster0.jwsdd0d.mongodb.net/shardacrm?appName=Cluster0",
 
   // JWT
   jwtSecret: process.env.JWT_SECRET || "your-secret-key",
@@ -65,6 +67,8 @@ export const config = {
     anthropicKey: process.env.ANTHROPIC_API_KEY,
     geminiKey: process.env.GEMINI_API_KEY,
   },
+
+  GOOGLE_SERVICE_ACCOUNT_PATH: process.env.GOOGLE_SERVICE_ACCOUNT_PATH,
 
   // Logging
   logLevel: process.env.LOG_LEVEL || "debug",

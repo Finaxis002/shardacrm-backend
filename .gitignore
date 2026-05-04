@@ -9,6 +9,7 @@ package-lock.json
 
 # Service account & credentials
 service-account.json
+*shardacrm-bcd1191276f4.json
 *-service-account.json
 *-credentials.json
 *.pem
