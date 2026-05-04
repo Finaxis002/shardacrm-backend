@@ -58,22 +58,26 @@ const getAuthedClient = async (organization) => {
  */
 export const getAuthUrl = asyncHandler(async (req, res) => {
   const client = makeOAuth2Client();
-   console.log("REDIRECT URI being used:", process.env.GOOGLE_REDIRECT_URI);
+  
+  // Frontend se origin path mangwayein (e.g. /calendar ya /admin)
+  const { origin } = req.query; 
+
   const url = client.generateAuthUrl({
     access_type: "offline",
-    prompt: "consent", // guarantees a refresh_token every time
+    prompt: "consent",
     scope: [
       "https://www.googleapis.com/auth/calendar",
       "https://www.googleapis.com/auth/calendar.events",
       "https://www.googleapis.com/auth/userinfo.email",
     ],
-    // Encode orgId + userId so the callback can update the right row
+    // State mein ab origin path bhi bhej rahe hain
     state: JSON.stringify({
       organization: req.user.organization.toString(),
       userId: req.user._id.toString(),
+      returnPath: origin || '/admin' // Ye line add karein
     }),
   });
- 
+
   res.status(200).json(new ApiResponse(200, { url }, "Auth URL generated"));
 });
  
@@ -93,11 +97,14 @@ export const oauthCallback = asyncHandler(async (req, res) => {
     );
   }
  
-  let organization, userId;
+ let organization, userId, returnPath;
   try {
-    ({ organization, userId } = JSON.parse(state));
+    const parsedState = JSON.parse(state);
+    organization = parsedState.organization;
+    userId = parsedState.userId;
+    returnPath = parsedState.returnPath || '/admin'; // State se path nikalein
   } catch {
-    return res.redirect(`${frontendUrl}/admin?gcal=error&msg=invalid_state&tab=integrations`);
+    return res.redirect(`${frontendUrl}/admin?gcal=error&msg=invalid_state`);
   }
  
   try {
@@ -127,7 +134,7 @@ export const oauthCallback = asyncHandler(async (req, res) => {
     );
  
     logger.info(`Google Calendar connected for org ${organization} by user ${userId}`);
-    res.redirect(`${frontendUrl}/admin?gcal=success&tab=integrations`);
+   res.redirect(`${frontendUrl}${returnPath}?gcal=success&tab=integrations`);
   } catch (err) {
     logger.error("GCal callback error:", err);
     res.redirect(`${frontendUrl}/admin?gcal=error&msg=token_exchange_failed&tab=integrations`);
