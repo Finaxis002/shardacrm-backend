@@ -232,11 +232,12 @@ export const createReminder = asyncHandler(async (req, res) => {
         : [assignedTo || createdBy],
   });
 
-  await reminder.save();
-  await reminder.populate("leadId", "name phone");
-  await reminder.populate("assignedTo", "name email");
+await reminder.save();
 
-  const reminderRecipients = buildReminderNotificationRecipients(reminder);
+const reminderRecipients = buildReminderNotificationRecipients(reminder);
+
+await reminder.populate("leadId", "name phone");
+await reminder.populate("assignedTo", "name email");
   if (reminderRecipients.length) {
     await createNotifications({
       recipientIds: reminderRecipients,
@@ -305,11 +306,12 @@ export const updateReminder = asyncHandler(async (req, res) => {
     ...req.body,
     notifyUsers: reminder.notifyUsers,
   });
-  await reminder.save();
+  
+  const reminderRecipients = buildReminderNotificationRecipients(reminder);
+
   await reminder.populate("leadId", "name phone");
   await reminder.populate("assignedTo", "name email");
 
-  const reminderRecipients = buildReminderNotificationRecipients(reminder);
   if (reminderRecipients.length) {
     await createNotifications({
       recipientIds: reminderRecipients,
