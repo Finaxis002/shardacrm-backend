@@ -24,7 +24,13 @@ export const getLeads = asyncHandler(async (req, res) => {
 
   // Build filter
   const filter = { organization };
-  if (status) filter.status = status;
+  if (status) {
+    if (status === "New") {
+      filter.status = { $in: ["New", "Repeat"] };
+    } else {
+      filter.status = status;
+    }
+  }
   if (source) filter.source = source;
   if (assignedTo) filter.assignedTo = assignedTo;
 

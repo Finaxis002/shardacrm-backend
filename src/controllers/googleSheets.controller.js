@@ -5,7 +5,7 @@ import ApiError from "../utils/apiError.js";
 import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import logger from "../utils/logger.js";
-
+import { google } from "googleapis";
 /* ═══════════════════════════════════════════
    HELPERS
 ═══════════════════════════════════════════ */
@@ -48,20 +48,28 @@ const parseDate = (val) => {
  * Fetch rows from Google Sheets API
  * Returns array of arrays (rows)
  */
+const getServiceAccountAuth = () => {
+  return new google.auth.GoogleAuth({
+    keyFile: "shardacrm-bcd1191276f4.json",
+    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+  });
+};
+
 const fetchSheetRows = async (sheetId, tabName, accessToken, fromRow = 1, toRow = 1000) => {
-  const range = encodeURIComponent(`'${tabName}'!A${fromRow}:Z${toRow}`);
-  const response = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
+  try {
+    const auth = getServiceAccountAuth();
+    const sheets = google.sheets({ version: "v4", auth });
+    const range = `'${tabName}'!A${fromRow}:Z${toRow}`;
+    
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range,
+    });
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new ApiError(400, `Google Sheets API error: ${response.status} - ${errText}`);
+    return response.data.values || [];
+  } catch (err) {
+    throw new ApiError(400, `Google Sheets API error: ${err.message}`);
   }
-
-  const json = await response.json();
-  return json.values || [];
 };
 
 /**
@@ -73,12 +81,14 @@ const rowToLead = (row, fieldMappings, fixedValues = []) => {
   // Apply column mappings
   fieldMappings.forEach(({ sheetColumnIndex, crmField }) => {
     if (crmField === "skip") return;
+    if (crmField === "status") return;
     if (lead[crmField] !== undefined) return;
     lead[crmField] = row[sheetColumnIndex] ?? "";
   });
 
   // Apply fixed values (override)
   fixedValues.forEach(({ crmField, value }) => {
+     if (crmField === "status") return;
     lead[crmField] = value;
   });
 
@@ -94,7 +104,7 @@ const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organizatio
   console.log("Sample row:", rows[0]);
   let imported = 0;
   let skipped = 0;
-
+const processedPhones = new Set();
   for (const row of rows) {
     const leadData = rowToLead(row, fieldMappings, fixedValues);
 
@@ -111,8 +121,15 @@ const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organizatio
       continue;
     }
 
-    const phoneClean = String(leadData.phone).trim();
-  
+const phoneClean = String(leadData.phone).trim();
+
+
+if (processedPhones.has(phoneClean)) {
+  skipped++;
+  continue;
+}
+processedPhones.add(phoneClean);
+
 const existing = await Lead.findOne({ phone: phoneClean, organization });
 console.log("Phone check:", phoneClean, "| Existing found:", !!existing);
 const emailRaw = String(leadData.email || "").trim().toLowerCase();
@@ -122,14 +139,30 @@ const validEmail = emailRaw && emailRegex.test(emailRaw) ? emailRaw : undefined;
 const sourceRaw = String(leadData.source || "").trim();
 
 if (existing) {
-  existing.status = "Repeat";
-  existing.isDuplicate = true;
-  await existing.save();
-  console.log("Updated lead updatedAt:", existing.updatedAt); 
+  // Naya lead banao Repeat status ke saath
+  const repeatLead = new Lead({
+    name:        String(leadData.name).trim(),
+    phone:       phoneClean,
+    email:       validEmail,
+    city:        leadData.city || "",
+    source:      VALID_SOURCES.includes(sourceRaw) ? sourceRaw : "Google Sheet",
+    status:      "Repeat",
+    dealValue:   Number(leadData.dealValue) || 0,
+    product:     leadData.product || "",
+    priority:    normalizePriority(leadData.priority),
+    closeDate:   parseDate(leadData.closeDate),
+    assignedTo:  assignedTo || createdBy,
+    organization,
+    createdBy,
+    isDuplicate: true,
+  });
+
+  await repeatLead.save();
+
   await Activity.create({
-    leadId:       existing._id,
+    leadId:       repeatLead._id,
     type:         "Note",
-    text:         "Duplicate entry detected in Google Sheet — status set to Repeat",
+    text:         "Duplicate entry detected in Google Sheet — new lead created with Repeat status",
     createdBy,
     organization,
   });
@@ -145,7 +178,7 @@ const lead = new Lead({
   email:      validEmail,
   city:       leadData.city || "",
   source:     VALID_SOURCES.includes(sourceRaw) ? sourceRaw : "Google Sheet",
-  status:     leadData.status || "New",
+ status:     "New",
   dealValue:  Number(leadData.dealValue) || 0,
   product:    leadData.product || "",
   priority:   normalizePriority(leadData.priority),
@@ -320,7 +353,10 @@ const runFirstImport = async ({ sync, organization, createdBy }) => {
   try {
     const rows = await fetchSheetRows(sync.sheetId, sync.tabName, sync.accessToken, 2, 10000);
   console.log("First import - rows fetched:", rows.length, "syncId:", sync._id);
+  console.log("Rows fetched:", rows.length, "| lastRowSynced before:", sync.lastRowSynced);
+  console.log("lastRowSynced after:", sync.lastRowSynced + rows.length);
     const { imported, skipped } = await saveLeadsFromRows({
+      
       rows,
       fieldMappings: sync.fieldMappings,
       fixedValues:   sync.fixedValues,
@@ -425,7 +461,7 @@ export const syncNewRows = async (sync) => {
       assignedTo:    sync.createdBy,
     });
 
-    sync.lastRowSynced += rows.length;
+    sync.lastRowSynced += rows.length - skipped;
     sync.lastSyncedAt   = new Date();
     sync.totalImported += imported;
     sync.lastError      = null;
