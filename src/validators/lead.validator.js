@@ -17,10 +17,14 @@ export const createLeadValidator = Joi.object({
   assignedTo: Joi.string().optional(),
   coAssignees: Joi.array().items(Joi.string()).optional(),
   activity: Joi.object({
-    type: Joi.string().valid("Note", "Call", "Email", "Meeting", "Task").optional(),
+    type: Joi.string()
+      .valid("Note", "Call", "Email", "Meeting", "Task")
+      .optional(),
     text: Joi.string().optional().allow(""),
     callDuration: Joi.string().optional().allow(""),
-    callDirection: Joi.string().valid("Outgoing", "Incoming", "Missed").optional(),
+    callDirection: Joi.string()
+      .valid("Outgoing", "Incoming", "Missed")
+      .optional(),
     callOutcome: Joi.string()
       .valid("Spoke", "No Answer", "Left Voicemail")
       .optional(),
@@ -35,7 +39,15 @@ export const createLeadValidator = Joi.object({
   payment: Joi.object({
     amount: Joi.number().min(0).required(),
     paymentMode: Joi.string()
-      .valid("UPI", "Bank Transfer", "Cash", "Cheque", "Razorpay", "Stripe", "PayU")
+      .valid(
+        "UPI",
+        "Bank Transfer",
+        "Cash",
+        "Cheque",
+        "Razorpay",
+        "Stripe",
+        "PayU",
+      )
       .required(),
     status: Joi.string()
       .valid("Pending", "Partial", "Paid", "Overdue", "Cancelled")
@@ -43,18 +55,16 @@ export const createLeadValidator = Joi.object({
     reference: Joi.string().optional().allow(""),
     paymentDate: Joi.date().optional(),
   }).optional(),
-reminder: Joi.object({
-  type: Joi.string()
-    .valid("Call", "Email", "Meeting", "Follow-up", "Payment")
-    .required(),
-  assignedTo: Joi.string().required(),
-  reminderDate: Joi.alternatives()
-    .try(Joi.date(), Joi.string())
-    .required(),                            
-  reminderTime: Joi.string().optional().allow(""),
-  note: Joi.string().optional().allow(""),
-  notifyUsers: Joi.array().items(Joi.string()).optional(),
-}).optional(),
+  reminder: Joi.object({
+    type: Joi.string()
+      .valid("Call", "Email", "Meeting", "Follow-up", "Payment")
+      .required(),
+    assignedTo: Joi.string().required(),
+    reminderDate: Joi.alternatives().try(Joi.date(), Joi.string()).required(),
+    reminderTime: Joi.string().optional().allow(""),
+    note: Joi.string().optional().allow(""),
+    notifyUsers: Joi.array().items(Joi.string()).optional(),
+  }).optional(),
   customFields: Joi.object().optional(),
 });
 
@@ -85,7 +95,7 @@ export const updateLeadStatusValidator = Joi.object({
 
 export const searchLeadsValidator = Joi.object({
   page: Joi.number().optional().min(1).default(1),
-  limit: Joi.number().optional().min(1).max(100).default(10),
+  limit: Joi.number().optional().min(1).max(100000).default(10),
   status: Joi.string().optional(),
   source: Joi.string().optional(),
   assignedTo: Joi.string().optional(),

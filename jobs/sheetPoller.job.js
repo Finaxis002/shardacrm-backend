@@ -13,7 +13,7 @@ import GoogleSheetSync from "../src/models/GoogleSheetSync.model.js";
 import { syncNewRows }  from "../src/controllers/googleSheets.controller.js";
 import logger           from "../src/utils/logger.js";
 
-const POLL_INTERVAL_MS = 10 * 1000; // 10 seconds
+const POLL_INTERVAL_MS = 60 * 1000; // 1 minute
 
 let pollerTimer = null;
 let isRunning   = false;
@@ -32,9 +32,8 @@ const pollAllActiveSheets = async () => {
   try {
     // Fetch all active syncs whose token has not expired
     const activeSyncs = await GoogleSheetSync.find({
-      isActive: true,
-      tokenExpiresAt: { $gt: new Date() }, // token still valid
-    });
+  isActive: true,
+});
 
     if (!activeSyncs.length) {
       logger.info("[SheetPoller] No active syncs found");
