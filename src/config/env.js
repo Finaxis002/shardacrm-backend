@@ -18,7 +18,10 @@ export const config = {
   jwtExpire: process.env.JWT_EXPIRE || "7d",
 
   // CORS
-  corsOrigin: process.env.CORS_ORIGIN?.split(",") || ["http://localhost:3000"],
+  corsOrigin: process.env.CORS_ORIGIN?.split(",") || [
+    "https://shardacrm-frontend.onrender.com",
+    "http://localhost:3000",
+  ],
 
   // Cloudinary
   cloudinary: {
