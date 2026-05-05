@@ -60,13 +60,19 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
 
   const pipelineValue = pipelineValueResult[0]?.total || 0;
   const collectedAmount = collectedResult[0]?.total || 0;
-
+const leadFilter = {
+  organization,
+  $or: [
+    { assignedTo: userId },
+    { coAssignees: userId },
+  ],
+};
   const [recentLeads, todayReminders, teamPerformance] = await Promise.all([
-    Lead.find({ organization })
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .populate("assignedTo", "name")
-      .lean(),
+    Lead.find(leadFilter)
+  .sort({ createdAt: -1 })
+  .limit(5)
+  .populate("assignedTo", "name")
+  .lean(),
    Reminder.find({
   organization,
   isDone: false,
