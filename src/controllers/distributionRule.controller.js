@@ -10,49 +10,70 @@ import mongoose from "mongoose";
  * Called internally from sheet sync
  */
 export const getNextAssignee = async (rule) => {
-  if (!rule || !rule.userPool || rule.userPool.length === 0) return null;
-  if (rule.rule === "manual") return null;
+  console.log(`\n--- 🎯 Distribution Logic Started ---`);
+  
+  if (!rule) {
+    return null;
+  }
+
+  if (!rule.userPool || rule.userPool.length === 0) {
+    return null;
+  }
+
+  // console.log(`📝 Rule: ${rule.name} | Mode: ${rule.rule}`);
+  // console.log(`👥 Pool Members:`, rule.userPool);
+
+  if (rule.rule === "manual") {
+    // console.log("ℹ️ Manual mode: Skipping auto-assignment");
+    return null;
+  }
 
   if (rule.rule === "round_robin") {
-    const oldRule = await DistributionRule.findByIdAndUpdate(
+    // Atomic update to prevent race conditions
+    const updatedRule = await DistributionRule.findByIdAndUpdate(
       rule._id,
       { $inc: { rrIndex: 1 } },
-      { new: false }
+      { new: true, select: "rrIndex userPool name" }
     );
-    
-    if (!oldRule || !oldRule.userPool?.length) return null;
-    
-    const pool = oldRule.userPool.map((id) => id.toString());
-    const index = oldRule.rrIndex % pool.length;
+
+    const pool = updatedRule.userPool;
+    const index = (updatedRule.rrIndex - 1) % pool.length;
     const assignee = pool[index];
-    
-    console.log("RR pool:", pool);
-    console.log("RR index:", oldRule.rrIndex, "→", index, "assignee:", assignee);
-    
+
+    // console.log(`✅ RR Step: Total Leads=${updatedRule.rrIndex} | Index=${index} | Assignee=${assignee}`);
+    // console.log(`--- ✅ Distribution Complete ---\n`);
     return assignee;
   }
 
   if (rule.rule === "equal_load") {
-    const freshRule = await DistributionRule.findById(rule._id);
+    const freshRule = await DistributionRule.findById(rule._id).lean();
     if (!freshRule) return null;
-    
+
     const pool = freshRule.userPool.map((id) => id.toString());
     let minCount = Infinity;
     let selectedUser = pool[0];
 
+    // console.log("📊 Current Load Counts:", freshRule.leadCounts);
+
     for (const userId of pool) {
-      const count = freshRule.leadCounts.get(userId) || 0;
+      // Check if Map or Object
+      const count = (freshRule.leadCounts instanceof Map 
+        ? freshRule.leadCounts.get(userId) 
+        : freshRule.leadCounts[userId]) || 0;
+
       if (count < minCount) {
         minCount = count;
         selectedUser = userId;
       }
     }
 
-    await DistributionRule.findByIdAndUpdate(
-      rule._id,
+    await DistributionRule.updateOne(
+      { _id: rule._id },
       { $inc: { [`leadCounts.${selectedUser}`]: 1 } }
     );
-    
+
+    // console.log(`✅ Equal Load: Selected User ${selectedUser} with Min Count ${minCount}`);
+    // console.log(`--- ✅ Distribution Complete ---\n`);
     return selectedUser;
   }
 
