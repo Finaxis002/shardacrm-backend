@@ -6,6 +6,8 @@ import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import logger from "../utils/logger.js";
 import { google } from "googleapis";
+import DistributionRule from "../models/DistributionRule.model.js";
+import { findRuleForSheet, getNextAssignee } from "./distributionRule.controller.js";
 /* ═══════════════════════════════════════════
    HELPERS
 ═══════════════════════════════════════════ */
@@ -95,16 +97,31 @@ const rowToLead = (row, fieldMappings, fixedValues = []) => {
   return lead;
 };
 
-/**
- * Save leads to DB from rows
- * Returns { imported, skipped }
- */
-const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organization, createdBy, assignedTo }) => {
+const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organization, createdBy, assignedTo, syncId }) => {
   console.log("Total rows to process:", rows.length);
   console.log("Sample row:", rows[0]);
+
+  // Distribution rule dhundho
+let distributionRule = null;
+let activeRuleInfo = null;
+if (syncId) {
+  distributionRule = await findRuleForSheet(syncId, organization);
+  if (distributionRule) {
+    activeRuleInfo = {
+      ruleId: String(distributionRule._id),
+      ruleType: distributionRule.rule,
+      sheetSyncIds: distributionRule.sheetSyncIds?.map((id) => String(id)) || [],
+      userPool: distributionRule.userPool?.map((id) => String(id)) || [],
+    };
+    console.log("Distribution rule matched:", activeRuleInfo);
+  } else {
+    console.log("No active distribution rule found for syncId:", syncId);
+  }
+}
+
   let imported = 0;
   let skipped = 0;
-const processedPhones = new Set();
+  const processedPhones = new Set();
   for (const row of rows) {
     const leadData = rowToLead(row, fieldMappings, fixedValues);
 
@@ -123,6 +140,23 @@ const processedPhones = new Set();
 
 const phoneClean = String(leadData.phone).trim();
 
+// Assignee decide karo - distribution rule se ya default
+    let finalAssignee = assignedTo || createdBy;
+    let assignmentSource = "default";
+    let assignedRule = null;
+
+    if (distributionRule && distributionRule.rule !== "manual") {
+      const nextUser = await getNextAssignee(distributionRule);
+      if (nextUser) {
+        finalAssignee = nextUser;
+        assignmentSource = "rule";
+        assignedRule = distributionRule.rule;
+      }
+    }
+
+    console.log(`Sheet sync ${syncId} → lead=${leadData.name || "<no-name>"} phone=${phoneClean} assignedTo=${String(finalAssignee)} source=${assignmentSource}` +
+      (assignedRule ? ` rule=${assignedRule}` : "") +
+      (activeRuleInfo ? ` ruleId=${activeRuleInfo.ruleId}` : ""));
 
 if (processedPhones.has(phoneClean)) {
   skipped++;
@@ -151,7 +185,7 @@ if (existing) {
     product:     leadData.product || "",
     priority:    normalizePriority(leadData.priority),
     closeDate:   parseDate(leadData.closeDate),
-    assignedTo:  assignedTo || createdBy,
+    assignedTo:  finalAssignee,
     organization,
     createdBy,
     isDuplicate: true,
@@ -183,7 +217,7 @@ const lead = new Lead({
   product:    leadData.product || "",
   priority:   normalizePriority(leadData.priority),
   closeDate:  parseDate(leadData.closeDate),
-  assignedTo: assignedTo || createdBy,
+  assignedTo: finalAssignee,
   organization,
   createdBy,
   isDuplicate: false,
@@ -355,14 +389,14 @@ const runFirstImport = async ({ sync, organization, createdBy }) => {
   console.log("First import - rows fetched:", rows.length, "syncId:", sync._id);
   console.log("Rows fetched:", rows.length, "| lastRowSynced before:", sync.lastRowSynced);
   console.log("lastRowSynced after:", sync.lastRowSynced + rows.length);
-    const { imported, skipped } = await saveLeadsFromRows({
-      
+  const { imported, skipped } = await saveLeadsFromRows({
       rows,
       fieldMappings: sync.fieldMappings,
       fixedValues:   sync.fixedValues,
       organization,
       createdBy,
       assignedTo: createdBy,
+      syncId: sync._id,  // ADD
     });
 
     sync.lastRowSynced = rows.length + 1;
@@ -459,6 +493,7 @@ export const syncNewRows = async (sync) => {
       organization:  sync.organization,
       createdBy:     sync.createdBy,
       assignedTo:    sync.createdBy,
+      syncId: sync._id,
     });
 
     sync.lastRowSynced += rows.length - skipped;

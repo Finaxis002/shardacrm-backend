@@ -1,0 +1,205 @@
+import DistributionRule from "../models/DistributionRule.model.js";
+import ApiError from "../utils/apiError.js";
+import ApiResponse from "../utils/apiResponse.js";
+import asyncHandler from "../utils/asyncHandler.js";
+import logger from "../utils/logger.js";
+import mongoose from "mongoose";
+
+/**
+ * Get next assignee based on rule
+ * Called internally from sheet sync
+ */
+export const getNextAssignee = async (rule) => {
+  if (!rule || !rule.userPool || rule.userPool.length === 0) return null;
+  if (rule.rule === "manual") return null;
+
+  if (rule.rule === "round_robin") {
+    const oldRule = await DistributionRule.findByIdAndUpdate(
+      rule._id,
+      { $inc: { rrIndex: 1 } },
+      { new: false }
+    );
+    
+    if (!oldRule || !oldRule.userPool?.length) return null;
+    
+    const pool = oldRule.userPool.map((id) => id.toString());
+    const index = oldRule.rrIndex % pool.length;
+    const assignee = pool[index];
+    
+    console.log("RR pool:", pool);
+    console.log("RR index:", oldRule.rrIndex, "→", index, "assignee:", assignee);
+    
+    return assignee;
+  }
+
+  if (rule.rule === "equal_load") {
+    const freshRule = await DistributionRule.findById(rule._id);
+    if (!freshRule) return null;
+    
+    const pool = freshRule.userPool.map((id) => id.toString());
+    let minCount = Infinity;
+    let selectedUser = pool[0];
+
+    for (const userId of pool) {
+      const count = freshRule.leadCounts.get(userId) || 0;
+      if (count < minCount) {
+        minCount = count;
+        selectedUser = userId;
+      }
+    }
+
+    await DistributionRule.findByIdAndUpdate(
+      rule._id,
+      { $inc: { [`leadCounts.${selectedUser}`]: 1 } }
+    );
+    
+    return selectedUser;
+  }
+
+  return null;
+};
+
+/**
+ * Find rule for a given sheetSyncId
+ * Called internally from sheet sync
+ */
+const ensureSheetSyncIdsNotUsed = async (sheetSyncIds, organization, excludeRuleId = null) => {
+  const query = {
+    organization,
+    isActive: true,
+    sheetSyncIds: { $in: sheetSyncIds.map((id) => new mongoose.Types.ObjectId(id)) },
+  };
+
+  if (excludeRuleId) {
+    query._id = { $ne: new mongoose.Types.ObjectId(excludeRuleId) };
+  }
+
+  const conflict = await DistributionRule.findOne(query).select("_id name sheetSyncIds").lean();
+  if (conflict) {
+    throw new ApiError(
+      400,
+      `Sheet already assigned to another active rule (${conflict.name}). Remove it from that rule first.`
+    );
+  }
+};
+
+export const findRuleForSheet = async (sheetSyncId, organization) => {
+  const syncObjectId = mongoose.isValidObjectId(sheetSyncId)
+    ? new mongoose.Types.ObjectId(sheetSyncId.toString())
+    : null;
+
+  const query = {
+    organization,
+    isActive: true,
+    $or: [
+      { sheetSyncIds: sheetSyncId },
+    ],
+  };
+
+  if (syncObjectId) {
+    query.$or.unshift({ sheetSyncIds: syncObjectId });
+  }
+
+  const rule = await DistributionRule.findOne(query);
+
+  if (!rule) {
+    logger.info(`No active distribution rule matched for sheetSyncId=${sheetSyncId}`);
+  }
+
+  return rule;
+};
+
+/**
+ * GET /api/v1/distribution-rules
+ */
+export const getRules = asyncHandler(async (req, res) => {
+  const organization = req.user.organization;
+
+  const rules = await DistributionRule.find({ organization })
+    .populate("userPool", "name email role")
+    .populate("sheetSyncIds", "sheetName tabName")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  res.status(200).json(new ApiResponse(200, rules, "Rules fetched"));
+});
+
+/**
+ * POST /api/v1/distribution-rules
+ */
+export const createRule = asyncHandler(async (req, res) => {
+  const { name, sheetSyncIds, rule, userPool } = req.body;
+  const organization = req.user.organization;
+  const createdBy = req.user._id;
+
+  if (!name?.trim()) throw new ApiError(400, "Name is required");
+  if (!sheetSyncIds?.length) throw new ApiError(400, "Select at least one sheet");
+  if (!userPool?.length) throw new ApiError(400, "Select at least one user");
+
+  await ensureSheetSyncIdsNotUsed(sheetSyncIds, organization);
+
+  const newRule = await DistributionRule.create({
+    organization,
+    createdBy,
+    name: name.trim(),
+    sheetSyncIds,
+    rule: rule || "round_robin",
+    userPool,
+    rrIndex: 0,
+    leadCounts: new Map(userPool.map((id) => [id.toString(), 0])),
+  });
+
+  await newRule.populate("userPool", "name email role");
+  await newRule.populate("sheetSyncIds", "sheetName tabName");
+
+  logger.info(`Distribution rule created: ${newRule._id} by ${createdBy}`);
+
+  res.status(201).json(new ApiResponse(201, newRule, "Rule created"));
+});
+
+/**
+ * PUT /api/v1/distribution-rules/:id
+ */
+export const updateRule = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { name, sheetSyncIds, rule, userPool, isActive } = req.body;
+  const organization = req.user.organization;
+
+  const existing = await DistributionRule.findOne({ _id: id, organization });
+  if (!existing) throw new ApiError(404, "Rule not found");
+
+  if (sheetSyncIds !== undefined) {
+    await ensureSheetSyncIdsNotUsed(sheetSyncIds, organization, id);
+    existing.sheetSyncIds = sheetSyncIds;
+  }
+
+  if (name !== undefined) existing.name = name.trim();
+  if (rule !== undefined) existing.rule = rule;
+  if (isActive !== undefined) existing.isActive = isActive;
+
+  if (userPool !== undefined) {
+    existing.userPool = userPool;
+    // Reset counts for new pool
+    existing.leadCounts = new Map(userPool.map((id) => [id.toString(), 0]));
+    existing.rrIndex = 0;
+  }
+
+  await existing.save();
+  await existing.populate("userPool", "name email role");
+  await existing.populate("sheetSyncIds", "sheetName tabName");
+
+  res.status(200).json(new ApiResponse(200, existing, "Rule updated"));
+});
+
+/**
+ * DELETE /api/v1/distribution-rules/:id
+ */
+export const deleteRule = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const organization = req.user.organization;
+
+  const rule = await DistributionRule.findOneAndDelete({ _id: id, organization });
+  if (!rule) throw new ApiError(404, "Rule not found");
+
+  res.status(200).json(new ApiResponse(200, { id }, "Rule deleted"));
+});
