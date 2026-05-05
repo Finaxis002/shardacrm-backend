@@ -15,7 +15,7 @@ import notificationRoutes from "./routes/notification.routes.js";
 import settingsRoutes from "./routes/settings.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
 import gcalRouter from "./routes/googleCalendar.routes.js";
-
+import distributionRuleRoutes from "./routes/distributionRule.routes.js";
 import googleSheetsRoutes from "./routes/googleSheets.routes.js";
 const app = express();
 
@@ -50,6 +50,7 @@ app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/settings", settingsRoutes);
 app.use("/api/v1/dashboard", dashboardRoutes);
 app.use("/api/v1/gcal", gcalRouter);
+app.use("/api/v1/distribution-rules", distributionRuleRoutes);
 
 app.use("/api/v1/google-sheets", googleSheetsRoutes);
 // 404 handler
