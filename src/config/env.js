@@ -72,6 +72,7 @@ export const config = {
   },
 
   GOOGLE_SERVICE_ACCOUNT_PATH: process.env.GOOGLE_SERVICE_ACCOUNT_PATH,
+  GOOGLE_SERVICE_ACCOUNT_JSON: process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
 
   // Logging
   logLevel: process.env.LOG_LEVEL || "debug",
