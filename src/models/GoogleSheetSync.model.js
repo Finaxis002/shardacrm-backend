@@ -26,7 +26,7 @@ const googleSheetSyncSchema = new mongoose.Schema(
     },
 
     /* Google Sheet info */
-    googleEmail:   { type: String, required: true },
+    googleEmail:   { type: String, required: false, default: "" },
     sheetId:       { type: String, required: true },
     sheetName:     { type: String, required: true },
     tabName:       { type: String, required: true },

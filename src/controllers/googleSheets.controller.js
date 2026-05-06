@@ -240,61 +240,12 @@ if (existing) {
 
   await repeatLead.save();
 
-    if (processedPhones.has(phoneClean)) {
-      skipped++;
-      continue;
-    }
-    processedPhones.add(phoneClean);
-
-    const existing = await Lead.findOne({ phone: phoneClean, organization });
-    console.log("Phone check:", phoneClean, "| Existing found:", !!existing);
-    const emailRaw = String(leadData.email || "")
-      .trim()
-      .toLowerCase();
-    const emailRegex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
-    const validEmail =
-      emailRaw && emailRegex.test(emailRaw) ? emailRaw : undefined;
-
-    const sourceRaw = String(leadData.source || "").trim();
-
-    if (existing) {
-      // Naya lead banao Repeat status ke saath
-      const repeatLead = new Lead({
-        name: String(leadData.name).trim(),
-        phone: phoneClean,
-        email: validEmail,
-        city: leadData.city || "",
-        source: VALID_SOURCES.includes(sourceRaw) ? sourceRaw : "Google Sheet",
-        status: "Repeat",
-        dealValue: Number(leadData.dealValue) || 0,
-        product: leadData.product || "",
-        priority: normalizePriority(leadData.priority),
-        closeDate: parseDate(leadData.closeDate),
-        assignedTo: finalAssignee,
-        organization,
-        createdBy,
-        isDuplicate: true,
-      });
-
-      await repeatLead.save();
-
-      await Activity.create({
-        leadId: repeatLead._id,
-        type: "Note",
-        text: "Duplicate entry detected in Google Sheet — new lead created with Repeat status",
-        createdBy,
-        organization,
-      });
-
-      imported++;
-      continue;
-    }
+    
 
   imported++;
   continue;
 }
 
-// 👇 Naya lead banao agar exist nahi karta
 const lead = new Lead({
   name:       String(leadData.name).trim(),
   phone:      phoneClean,
