@@ -7,7 +7,9 @@ import { formatPaginatedResponse, parsePagination } from "../utils/paginate.js";
 import logger from "../utils/logger.js";
 import { google } from "googleapis";
 import Settings from "../models/Settings.model.js";
+import User from "../models/User.model.js";
 import { createNotifications } from "../utils/notification.utils.js";
+import { sendReminderEmails } from "../utils/email.utils.js";
 
 // ── Google Calendar Helper ────────────────────────────────────────────────────
 
@@ -232,12 +234,12 @@ export const createReminder = asyncHandler(async (req, res) => {
         : [assignedTo || createdBy],
   });
 
-await reminder.save();
+  await reminder.save();
 
-const reminderRecipients = buildReminderNotificationRecipients(reminder);
+  const reminderRecipients = buildReminderNotificationRecipients(reminder);
 
-await reminder.populate("leadId", "name phone");
-await reminder.populate("assignedTo", "name email");
+  await reminder.populate("leadId", "name phone");
+  await reminder.populate("assignedTo", "name email");
   if (reminderRecipients.length) {
     await createNotifications({
       recipientIds: reminderRecipients,
@@ -249,6 +251,29 @@ await reminder.populate("assignedTo", "name email");
       type: "reminder",
       actionUrl: `/leads/${leadId}`,
     });
+
+    const settings = await Settings.findOne({ organization });
+    if (settings?.gmailEnabled) {
+      const reminderUsers = await User.find({
+        _id: { $in: reminderRecipients },
+      })
+        .select("name email")
+        .lean();
+
+      const emailRecipients = reminderUsers.filter((user) => user.email);
+      if (emailRecipients.length) {
+        const subject = `Reminder: ${reminder.type || "Follow-up"} for ${lead.name}`;
+        const message = `A new reminder has been created for lead ${lead.name}.\n\nType: ${reminder.type || "Follow-up"}\nDate: ${formatReminderDateTime(reminder)}\n\nNote:\n${reminder.note || "No note provided."}`;
+        const actionUrl = `${process.env.FRONTEND_URL || ""}/leads/${leadId}`;
+
+        await sendReminderEmails({
+          recipients: emailRecipients,
+          subject,
+          message,
+          actionUrl,
+        });
+      }
+    }
   }
 
   logger.info(`Reminder created: ${reminder._id} for lead ${leadId}`);
@@ -306,7 +331,7 @@ export const updateReminder = asyncHandler(async (req, res) => {
     ...req.body,
     notifyUsers: reminder.notifyUsers,
   });
-  
+
   const reminderRecipients = buildReminderNotificationRecipients(reminder);
 
   await reminder.populate("leadId", "name phone");
@@ -323,6 +348,29 @@ export const updateReminder = asyncHandler(async (req, res) => {
       type: "reminder",
       actionUrl: `/leads/${reminder.leadId}`,
     });
+
+    const settings = await Settings.findOne({ organization });
+    if (settings?.gmailEnabled) {
+      const reminderUsers = await User.find({
+        _id: { $in: reminderRecipients },
+      })
+        .select("name email")
+        .lean();
+
+      const emailRecipients = reminderUsers.filter((user) => user.email);
+      if (emailRecipients.length) {
+        const subject = `Reminder updated: ${reminder.type || "Follow-up"} for ${reminder.leadId?.name || "Lead"}`;
+        const message = `A reminder has been updated for lead ${reminder.leadId?.name || "Lead"}.\n\nType: ${reminder.type || "Follow-up"}\nDate: ${formatReminderDateTime(reminder)}\n\nNote:\n${reminder.note || "No note provided."}`;
+        const actionUrl = `${process.env.FRONTEND_URL || ""}/leads/${reminder.leadId}`;
+
+        await sendReminderEmails({
+          recipients: emailRecipients,
+          subject,
+          message,
+          actionUrl,
+        });
+      }
+    }
   }
 
   logger.info(`Reminder updated: ${id}`);
