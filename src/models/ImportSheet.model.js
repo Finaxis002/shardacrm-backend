@@ -39,6 +39,10 @@ const importSheetSchema = new mongoose.Schema(
       enum: ["pending", "importing", "completed", "failed"],
       default: "pending",
     },
+    sheetName: {
+      type: String,
+      default: "",
+          },
     errorLog: String,
   },
   { timestamps: true },

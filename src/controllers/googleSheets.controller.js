@@ -137,17 +137,10 @@ const rowToLead = (row, fieldMappings, fixedValues = []) => {
   return lead;
 };
 
-const saveLeadsFromRows = async ({
-  rows,
-  fieldMappings,
-  fixedValues,
-  organization,
-  createdBy,
-  assignedTo,
-  syncId,
-}) => {
+const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organization, createdBy, assignedTo, syncId, sheetName }) => {
   console.log("Total rows to process:", rows.length);
   console.log("Sample row:", rows[0]);
+    console.log("💥 saveLeadsFromRows sheetName received:", sheetName);
 
   // Distribution rule dhundho
   let distributionRule = null;
@@ -207,11 +200,45 @@ const saveLeadsFromRows = async ({
       }
     }
 
-    console.log(
-      `Sheet sync ${syncId} → lead=${leadData.name || "<no-name>"} phone=${phoneClean} assignedTo=${String(finalAssignee)} source=${assignmentSource}` +
-        (assignedRule ? ` rule=${assignedRule}` : "") +
-        (activeRuleInfo ? ` ruleId=${activeRuleInfo.ruleId}` : ""),
-    );
+    console.log(`Sheet sync ${syncId} → lead=${leadData.name || "<no-name>"} phone=${phoneClean} assignedTo=${String(finalAssignee)} source=${assignmentSource}` +
+      (assignedRule ? ` rule=${assignedRule}` : "") +
+      (activeRuleInfo ? ` ruleId=${activeRuleInfo.ruleId}` : ""));
+
+if (processedPhones.has(phoneClean)) {
+  skipped++;
+  continue;
+}
+processedPhones.add(phoneClean);
+
+const existing = await Lead.findOne({ phone: phoneClean, organization });
+console.log("Phone check:", phoneClean, "| Existing found:", !!existing);
+const emailRaw = String(leadData.email || "").trim().toLowerCase();
+const emailRegex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
+const validEmail = emailRaw && emailRegex.test(emailRaw) ? emailRaw : undefined;
+
+const sourceRaw = String(leadData.source || "").trim();
+
+if (existing) {
+  // Naya lead banao Repeat status ke saath
+  const repeatLead = new Lead({
+    name:        String(leadData.name).trim(),
+    phone:       phoneClean,
+    email:       validEmail,
+    city:        leadData.city || "",
+    source:      VALID_SOURCES.includes(sourceRaw) ? sourceRaw : "Google Sheet",
+    status:      "Repeat",
+    dealValue:   Number(leadData.dealValue) || 0,
+    product:     leadData.product || "",
+    priority:    normalizePriority(leadData.priority),
+    closeDate:   parseDate(leadData.closeDate),
+    assignedTo:  finalAssignee,
+    organization,
+    createdBy,
+    isDuplicate: true,
+     sheetName:   sheetName || "",
+  });
+
+  await repeatLead.save();
 
     if (processedPhones.has(phoneClean)) {
       skipped++;
@@ -263,23 +290,28 @@ const saveLeadsFromRows = async ({
       continue;
     }
 
-    // 👇 Naya lead banao agar exist nahi karta
-    const lead = new Lead({
-      name: String(leadData.name).trim(),
-      phone: phoneClean,
-      email: validEmail,
-      city: leadData.city || "",
-      source: VALID_SOURCES.includes(sourceRaw) ? sourceRaw : "Google Sheet",
-      status: "New",
-      dealValue: Number(leadData.dealValue) || 0,
-      product: leadData.product || "",
-      priority: normalizePriority(leadData.priority),
-      closeDate: parseDate(leadData.closeDate),
-      assignedTo: finalAssignee,
-      organization,
-      createdBy,
-      isDuplicate: false,
-    });
+  imported++;
+  continue;
+}
+
+// 👇 Naya lead banao agar exist nahi karta
+const lead = new Lead({
+  name:       String(leadData.name).trim(),
+  phone:      phoneClean,
+  email:      validEmail,
+  city:       leadData.city || "",
+  source:     VALID_SOURCES.includes(sourceRaw) ? sourceRaw : "Google Sheet",
+ status:     "New",
+  dealValue:  Number(leadData.dealValue) || 0,
+  product:    leadData.product || "",
+  priority:   normalizePriority(leadData.priority),
+  closeDate:  parseDate(leadData.closeDate),
+  assignedTo: finalAssignee,
+  organization,
+  createdBy,
+  isDuplicate: false,
+  sheetName:  sheetName || "",   
+});
 
     await lead.save();
 
@@ -462,35 +494,25 @@ export const saveMapping = asyncHandler(async (req, res) => {
  * Background: First import — fetch all existing rows
  */
 const runFirstImport = async ({ sync, organization, createdBy }) => {
+  // Fresh fetch karo DB se
+  const freshSync = await GoogleSheetSync.findById(sync._id).lean();
+  const sheetName = freshSync?.sheetName || sync.sheetName || "";
+  
+  console.log("🔍 runFirstImport sheetName:", sheetName);
+  
   try {
-    const rows = await fetchSheetRows(
-      sync.sheetId,
-      sync.tabName,
-      sync.accessToken,
-      2,
-      10000,
-    );
-    console.log(
-      "First import - rows fetched:",
-      rows.length,
-      "syncId:",
-      sync._id,
-    );
-    console.log(
-      "Rows fetched:",
-      rows.length,
-      "| lastRowSynced before:",
-      sync.lastRowSynced,
-    );
-    console.log("lastRowSynced after:", sync.lastRowSynced + rows.length);
+    const rows = await fetchSheetRows(sync.sheetId, sync.tabName, sync.accessToken, 2, 10000);
+    console.log("First import - rows fetched:", rows.length, "syncId:", sync._id);
+
     const { imported, skipped } = await saveLeadsFromRows({
       rows,
       fieldMappings: sync.fieldMappings,
       fixedValues: sync.fixedValues,
       organization,
       createdBy,
-      assignedTo: createdBy,
-      syncId: sync._id, // ADD
+      assignedTo:    createdBy,
+      syncId:        sync._id,
+      sheetName,          // ← fresh value
     });
 
     sync.lastRowSynced = rows.length + 1;
@@ -574,9 +596,13 @@ export const getSyncStatus = asyncHandler(async (req, res) => {
  * Syncs new rows for a single GoogleSheetSync document
  */
 export const syncNewRows = async (sync) => {
+    console.log("🔍 syncNewRows sheetName:", sync.sheetName);
   try {
     const fromRow = sync.lastRowSynced + 1;
 
+      const freshSync = await GoogleSheetSync.findById(sync._id).lean();
+    const sheetName = freshSync?.sheetName || sync.sheetName || "";
+    
     // DEBUG - baad mein hatana hai
     logger.info(
       `Sync ${sync._id} | lastRowSynced: ${sync.lastRowSynced} | fetching from row: ${fromRow}`,
@@ -603,6 +629,7 @@ export const syncNewRows = async (sync) => {
       createdBy: sync.createdBy,
       assignedTo: sync.createdBy,
       syncId: sync._id,
+        sheetName,
     });
 
     sync.lastRowSynced += rows.length - skipped;

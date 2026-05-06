@@ -17,6 +17,9 @@ import dashboardRoutes from "./routes/dashboard.routes.js";
 import gcalRouter from "./routes/googleCalendar.routes.js";
 import distributionRuleRoutes from "./routes/distributionRule.routes.js";
 import googleSheetsRoutes from "./routes/googleSheets.routes.js";
+import noteRoutes from "./routes/note.routes.js";
+import taskRoutes from "./routes/task.routes.js";
+
 const app = express();
 
 // Security middleware
@@ -51,6 +54,8 @@ app.use("/api/v1/settings", settingsRoutes);
 app.use("/api/v1/dashboard", dashboardRoutes);
 app.use("/api/v1/gcal", gcalRouter);
 app.use("/api/v1/distribution-rules", distributionRuleRoutes);
+app.use("/api/v1/notes", noteRoutes);
+app.use("/api/v1/tasks", taskRoutes);
 
 app.use("/api/v1/google-sheets", googleSheetsRoutes);
 // 404 handler
