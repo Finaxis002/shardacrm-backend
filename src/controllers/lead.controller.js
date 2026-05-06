@@ -33,7 +33,7 @@ export const getLeads = asyncHandler(async (req, res) => {
     }
   }
   if (source) filter.source = source;
-   // 👇 Restrict assignedTo for non‑admin users
+  // 👇 Restrict assignedTo for non‑admin users
   if (!isAdmin) {
     // Non‑admin can only see leads assigned to themselves
     filter.assignedTo = userId;
@@ -91,6 +91,8 @@ export const getLeads = asyncHandler(async (req, res) => {
 export const getLead = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const organization = req.user.organization;
+  const userId = req.user._id;
+  const isAdmin = req.user.role === "admin";
 
   const lead = await Lead.findOne({ _id: id, organization })
     .populate("assignedTo", "name email phone")
@@ -101,9 +103,12 @@ export const getLead = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Lead not found");
   }
 
-   if (!isAdmin) {
-    const isAssignee = lead.assignedTo && lead.assignedTo._id.toString() === userId.toString();
-    const isCoAssignee = lead.coAssignees?.some(c => c._id.toString() === userId.toString());
+  if (!isAdmin) {
+    const isAssignee =
+      lead.assignedTo && lead.assignedTo._id.toString() === userId.toString();
+    const isCoAssignee = lead.coAssignees?.some(
+      (c) => c._id.toString() === userId.toString(),
+    );
     if (!isAssignee && !isCoAssignee) {
       throw new ApiError(403, "You are not authorized to view this lead");
     }
