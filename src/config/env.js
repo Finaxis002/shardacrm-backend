@@ -18,7 +18,10 @@ export const config = {
   jwtExpire: process.env.JWT_EXPIRE || "7d",
 
   // CORS
-  corsOrigin: process.env.CORS_ORIGIN?.split(",") || ["http://localhost:3000"],
+  corsOrigin: process.env.CORS_ORIGIN?.split(",") || [
+    "https://shardacrm-frontend.onrender.com",
+    "http://localhost:3000",
+  ],
 
   // Cloudinary
   cloudinary: {
@@ -69,6 +72,7 @@ export const config = {
   },
 
   GOOGLE_SERVICE_ACCOUNT_PATH: process.env.GOOGLE_SERVICE_ACCOUNT_PATH,
+  GOOGLE_SERVICE_ACCOUNT_JSON: process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
 
   // Logging
   logLevel: process.env.LOG_LEVEL || "debug",
