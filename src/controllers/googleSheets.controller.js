@@ -97,9 +97,10 @@ const rowToLead = (row, fieldMappings, fixedValues = []) => {
   return lead;
 };
 
-const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organization, createdBy, assignedTo, syncId }) => {
+const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organization, createdBy, assignedTo, syncId, sheetName }) => {
   console.log("Total rows to process:", rows.length);
   console.log("Sample row:", rows[0]);
+    console.log("💥 saveLeadsFromRows sheetName received:", sheetName);
 
   // Distribution rule dhundho
 let distributionRule = null;
@@ -189,6 +190,7 @@ if (existing) {
     organization,
     createdBy,
     isDuplicate: true,
+     sheetName:   sheetName || "",
   });
 
   await repeatLead.save();
@@ -221,6 +223,7 @@ const lead = new Lead({
   organization,
   createdBy,
   isDuplicate: false,
+  sheetName:  sheetName || "",   
 });
 
 await lead.save();
@@ -384,19 +387,25 @@ export const saveMapping = asyncHandler(async (req, res) => {
  * Background: First import — fetch all existing rows
  */
 const runFirstImport = async ({ sync, organization, createdBy }) => {
+  // Fresh fetch karo DB se
+  const freshSync = await GoogleSheetSync.findById(sync._id).lean();
+  const sheetName = freshSync?.sheetName || sync.sheetName || "";
+  
+  console.log("🔍 runFirstImport sheetName:", sheetName);
+  
   try {
     const rows = await fetchSheetRows(sync.sheetId, sync.tabName, sync.accessToken, 2, 10000);
-  console.log("First import - rows fetched:", rows.length, "syncId:", sync._id);
-  console.log("Rows fetched:", rows.length, "| lastRowSynced before:", sync.lastRowSynced);
-  console.log("lastRowSynced after:", sync.lastRowSynced + rows.length);
-  const { imported, skipped } = await saveLeadsFromRows({
+    console.log("First import - rows fetched:", rows.length, "syncId:", sync._id);
+
+    const { imported, skipped } = await saveLeadsFromRows({
       rows,
       fieldMappings: sync.fieldMappings,
       fixedValues:   sync.fixedValues,
       organization,
       createdBy,
-      assignedTo: createdBy,
-      syncId: sync._id,  // ADD
+      assignedTo:    createdBy,
+      syncId:        sync._id,
+      sheetName,          // ← fresh value
     });
 
     sync.lastRowSynced = rows.length + 1;
@@ -473,8 +482,12 @@ export const getSyncStatus = asyncHandler(async (req, res) => {
  * Syncs new rows for a single GoogleSheetSync document
  */
 export const syncNewRows = async (sync) => {
+    console.log("🔍 syncNewRows sheetName:", sync.sheetName);
   try {
     const fromRow = sync.lastRowSynced + 1;
+
+      const freshSync = await GoogleSheetSync.findById(sync._id).lean();
+    const sheetName = freshSync?.sheetName || sync.sheetName || "";
     
     // DEBUG - baad mein hatana hai
     logger.info(`Sync ${sync._id} | lastRowSynced: ${sync.lastRowSynced} | fetching from row: ${fromRow}`);
@@ -494,6 +507,7 @@ export const syncNewRows = async (sync) => {
       createdBy:     sync.createdBy,
       assignedTo:    sync.createdBy,
       syncId: sync._id,
+        sheetName,
     });
 
     sync.lastRowSynced += rows.length - skipped;
