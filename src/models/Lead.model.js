@@ -68,6 +68,10 @@ const leadSchema = new mongoose.Schema(
         ref: "User",
       },
     ],
+    recording: {
+  label: { type: String, default: "" },
+  url: { type: String, default: "" },
+},
     customFields: {
       type: Map,
       of: String,
