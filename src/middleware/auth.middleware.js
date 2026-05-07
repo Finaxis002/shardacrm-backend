@@ -50,3 +50,5 @@ export const refreshAccessToken = asyncHandler(async (req, res, next) => {
     throw new ApiError(401, error?.message || "Invalid refresh token");
   }
 });
+
+export const protect = verifyJWT;
