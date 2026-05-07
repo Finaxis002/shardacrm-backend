@@ -391,6 +391,12 @@ export const createLead = asyncHandler(async (req, res) => {
     createdBy,
     customFields: customFields || {},
   });
+if (recording && (recording.label || recording.url)) {
+  lead.recording = {
+    label: recording.label || "",
+    url: recording.url || "",
+  };
+}
 
   await lead.save();
   await lead.populate("assignedTo", "name email");
@@ -577,6 +583,13 @@ export const updateLead = asyncHandler(async (req, res) => {
       lead[field] = req.body[field];
     }
   });
+
+  if (req.body.recording !== undefined) {
+  lead.recording = {
+    label: req.body.recording.label || "",
+    url: req.body.recording.url || "",
+  };
+}
 
   if (req.body.coAssignees !== undefined) {
     const hasAssignPermission =
