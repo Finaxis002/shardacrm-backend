@@ -70,6 +70,10 @@ export const config = {
     anthropicKey: process.env.ANTHROPIC_API_KEY,
     geminiKey: process.env.GEMINI_API_KEY,
   },
+  attendance: {
+    email: process.env.ATTENDANCE_EMAIL,
+    pass: process.env.ATTENDANCE_EMAIL_PASS,
+  },
 
   GOOGLE_SERVICE_ACCOUNT_PATH: process.env.GOOGLE_SERVICE_ACCOUNT_PATH,
   GOOGLE_SERVICE_ACCOUNT_JSON: process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
