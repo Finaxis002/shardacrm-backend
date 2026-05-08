@@ -4,6 +4,7 @@ import ApiResponse from "../utils/apiResponse.js";
 import ApiError from "../utils/apiError.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import logger from "../utils/logger.js";
+import User from "../models/User.model.js";
  
 // ── Helpers ───────────────────────────────────────────────────────────────────
  
@@ -18,37 +19,32 @@ const makeOAuth2Client = () =>
  * Load tokens from DB, attach to client, and auto-persist refreshed tokens.
  * Throws ApiError(400) if the org has no saved tokens.
  */
-const getAuthedClient = async (organization) => {
-  const settings = await Settings.findOne({ organization });
-  if (!settings?.gcalTokens?.access_token) {
-    throw new ApiError(400, "Google Calendar is not connected for this organisation.");
+const getAuthedClient = async (userId) => {
+  const user = await User.findById(userId).select(
+    "+gcalTokens.access_token +gcalTokens.refresh_token +gcalTokens.expiry_date +gcalTokens.token_type +gcalTokens.scope"
+  );
+  if (!user?.gcalTokens?.access_token) {
+    throw new ApiError(400, "Google Calendar is not connected for this user.");
   }
- 
   const client = makeOAuth2Client();
   client.setCredentials({
-    access_token:  settings.gcalTokens.access_token,
-    refresh_token: settings.gcalTokens.refresh_token,
-    expiry_date:   settings.gcalTokens.expiry_date,
-    token_type:    settings.gcalTokens.token_type,
-    scope:         settings.gcalTokens.scope,
+    access_token:  user.gcalTokens.access_token,
+    refresh_token: user.gcalTokens.refresh_token,
+    expiry_date:   user.gcalTokens.expiry_date,
+    token_type:    user.gcalTokens.token_type,
+    scope:         user.gcalTokens.scope,
   });
- 
-  // Persist new access_token automatically after silent refresh
   client.on("tokens", async (tokens) => {
     const patch = {
       "gcalTokens.access_token": tokens.access_token,
       "gcalTokens.expiry_date":  tokens.expiry_date,
     };
-    if (tokens.refresh_token) {
-      patch["gcalTokens.refresh_token"] = tokens.refresh_token;
-    }
-    await Settings.findOneAndUpdate({ organization }, { $set: patch });
-    logger.info(`GCal tokens refreshed for org ${organization}`);
+    if (tokens.refresh_token) patch["gcalTokens.refresh_token"] = tokens.refresh_token;
+    await User.findByIdAndUpdate(userId, { $set: patch });
+    logger.info(`GCal tokens refreshed for user ${userId}`);
   });
- 
   return client;
 };
- 
 // ── Controllers ───────────────────────────────────────────────────────────────
  
 /**
@@ -71,11 +67,10 @@ export const getAuthUrl = asyncHandler(async (req, res) => {
       "https://www.googleapis.com/auth/userinfo.email",
     ],
     // State mein ab origin path bhi bhej rahe hain
-    state: JSON.stringify({
-      organization: req.user.organization.toString(),
-      userId: req.user._id.toString(),
-      returnPath: origin || '/admin' // Ye line add karein
-    }),
+state: JSON.stringify({
+  userId:     req.user._id.toString(),
+  returnPath: origin || "/calendar",
+}),
   });
 
   res.status(200).json(new ApiResponse(200, { url }, "Auth URL generated"));
@@ -97,15 +92,14 @@ export const oauthCallback = asyncHandler(async (req, res) => {
     );
   }
  
- let organization, userId, returnPath;
-  try {
-    const parsedState = JSON.parse(state);
-    organization = parsedState.organization;
-    userId = parsedState.userId;
-    returnPath = parsedState.returnPath || '/admin'; // State se path nikalein
-  } catch {
-    return res.redirect(`${frontendUrl}/admin?gcal=error&msg=invalid_state`);
-  }
+let userId, returnPath;
+try {
+  const parsed = JSON.parse(state);
+  userId     = parsed.userId;
+  returnPath = parsed.returnPath || "/calendar";
+} catch {
+  return res.redirect(`${frontendUrl}/calendar?gcal=error&msg=invalid_state`);
+}
  
   try {
     const client = makeOAuth2Client();
@@ -117,24 +111,18 @@ export const oauthCallback = asyncHandler(async (req, res) => {
     const { data }  = await oauth2.userinfo.get();
     const gcalUser  = data.email || "";
  
-    await Settings.findOneAndUpdate(
-      { organization },
-      {
-        gcalConnected: true,
-        gcalUser,
-        gcalTokens: {
-          access_token:  tokens.access_token  || "",
-          refresh_token: tokens.refresh_token || "",
-          expiry_date:   tokens.expiry_date   || 0,
-          token_type:    tokens.token_type    || "Bearer",
-          scope:         tokens.scope         || "",
-        },
-      },
-      { new: true },
-    );
- 
-    logger.info(`Google Calendar connected for org ${organization} by user ${userId}`);
-   res.redirect(`${frontendUrl}${returnPath}?gcal=success&tab=integrations`);
+await User.findByIdAndUpdate(userId, {
+  gcalConnected: true,
+  gcalUser,
+  gcalTokens: {
+    access_token:  tokens.access_token  || "",
+    refresh_token: tokens.refresh_token || "",
+    expiry_date:   tokens.expiry_date   || 0,
+    token_type:    tokens.token_type    || "Bearer",
+    scope:         tokens.scope         || "",
+  },
+});
+res.redirect(`${frontendUrl}${returnPath}?gcal=success`);
   } catch (err) {
     logger.error("GCal callback error:", err);
     res.redirect(`${frontendUrl}/admin?gcal=error&msg=token_exchange_failed&tab=integrations`);
@@ -146,30 +134,24 @@ export const oauthCallback = asyncHandler(async (req, res) => {
  * Revokes the token at Google and clears stored credentials.
  */
 export const disconnectGcal = asyncHandler(async (req, res) => {
-  const organization = req.user.organization;
-  const settings = await Settings.findOne({ organization });
- 
-  if (settings?.gcalTokens?.access_token) {
-    try {
-      const client = makeOAuth2Client();
-      client.setCredentials({ access_token: settings.gcalTokens.access_token });
-      await client.revokeCredentials();
-    } catch (err) {
-      // Revocation can fail if the token already expired — still disconnect locally
-      logger.warn(`GCal token revocation failed (continuing): ${err.message}`);
-    }
+const userId = req.user._id;
+const user = await User.findById(userId).select("+gcalTokens.access_token");
+if (user?.gcalTokens?.access_token) {
+  try {
+    const client = makeOAuth2Client();
+    client.setCredentials({ access_token: user.gcalTokens.access_token });
+    await client.revokeCredentials();
+  } catch (err) {
+    logger.warn(`GCal revocation failed (continuing): ${err.message}`);
   }
+}
+await User.findByIdAndUpdate(userId, {
+  gcalConnected: false,
+  gcalUser: "",
+  gcalTokens: { access_token: "", refresh_token: "", expiry_date: 0, token_type: "", scope: "" },
+});
  
-  await Settings.findOneAndUpdate(
-    { organization },
-    {
-      gcalConnected: false,
-      gcalUser: "",
-      gcalTokens: { access_token: "", refresh_token: "", expiry_date: 0, token_type: "", scope: "" },
-    },
-  );
- 
-  logger.info(`Google Calendar disconnected for org ${organization}`);
+  logger.info(`Google Calendar disconnected for user ${userId}`);
   res.status(200).json(new ApiResponse(200, {}, "Google Calendar disconnected"));
 });
  
@@ -178,13 +160,11 @@ export const disconnectGcal = asyncHandler(async (req, res) => {
  * Returns connection state (safe — no tokens exposed).
  */
 export const getGcalStatus = asyncHandler(async (req, res) => {
-  const settings = await Settings.findOne({ organization: req.user.organization });
-  res.status(200).json(
-    new ApiResponse(200, {
-      connected: settings?.gcalConnected || false,
-      user: settings?.gcalUser || null,
-    }, "GCal status fetched"),
-  );
+const user = await User.findById(req.user._id).select("gcalConnected gcalUser");
+res.status(200).json(new ApiResponse(200, {
+  connected: user?.gcalConnected || false,
+  user:      user?.gcalUser      || null,
+}, "GCal status fetched"));
 });
  
 /**
@@ -192,7 +172,7 @@ export const getGcalStatus = asyncHandler(async (req, res) => {
  * Lists the next 20 upcoming events from the connected calendar.
  */
 export const listEvents = asyncHandler(async (req, res) => {
-  const client   = await getAuthedClient(req.user.organization);
+ const client = await getAuthedClient(req.user._id);
   const calendar = google.calendar({ version: "v3", auth: client });
  
   const { data } = await calendar.events.list({
@@ -217,10 +197,8 @@ export const createEvent = asyncHandler(async (req, res) => {
     throw new ApiError(400, "title and startTime are required");
   }
  
-  const settings = await Settings.findOne({ organization: req.user.organization });
-  const timezone  = settings?.timezone || "Asia/Kolkata";
- 
-  const client   = await getAuthedClient(req.user.organization);
+const client = await getAuthedClient(req.user._id);
+const timezone = "Asia/Kolkata";
   const calendar = google.calendar({ version: "v3", auth: client });
  
   const start = new Date(startTime);
