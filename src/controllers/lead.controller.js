@@ -409,6 +409,7 @@ export const createLead = asyncHandler(async (req, res) => {
     dealValue,
     product: productValue,
     closeDate,
+    initialNote: note,
     priority: priority || "Normal",
     assignedTo: assignedUserId,
     coAssignees,
@@ -589,6 +590,9 @@ export const updateLead = asyncHandler(async (req, res) => {
   const oldStatus = lead.status;
   const oldAssignee = lead.assignedTo && lead.assignedTo.toString();
 
+  if (req.body.note !== undefined) {
+    lead.initialNote = req.body.note;
+  }
   const allowedFields = [
     "name",
     "phone",
@@ -600,6 +604,7 @@ export const updateLead = asyncHandler(async (req, res) => {
     "product",
     "closeDate",
     "priority",
+    "initialNote",
     "customFields",
   ];
 
