@@ -8,6 +8,10 @@ const router = express.Router();
 router.post("/mark",                protect,            ctrl.markAttendance);
 router.get("/my",                   protect,            ctrl.myAttendance);
 
+// OTP routes
+router.post("/otp/request",         protect,            ctrl.requestAttendanceOtp);
+router.post("/otp/verify",          protect,            ctrl.verifyAttendanceOtp);
+
 router.get("/admin/users",          protect, adminOnly, ctrl.getAllUsers);
 router.get("/admin/monthly",        protect, adminOnly, ctrl.adminMonthly);
 router.get("/admin/day",            protect, adminOnly, ctrl.adminDayDetail);
