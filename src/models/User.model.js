@@ -63,6 +63,24 @@ const userSchema = new mongoose.Schema(
       type: String,
       select: false,
     },
+
+    // ── Google Calendar (per-user connection) ─────────────────────────────
+    gcalConnected: {
+      type: Boolean,
+      default: false,
+    },
+    gcalUser: {
+      type: String,   // connected Gmail address
+      default: "",
+    },
+    gcalTokens: {
+      access_token:  { type: String, default: "", select: false },
+      refresh_token: { type: String, default: "", select: false },
+      expiry_date:   { type: Number, default: 0,  select: false },
+      token_type:    { type: String, default: "" },
+      scope:         { type: String, default: "" },
+    },
+    // ─────────────────────────────────────────────────────────────────────
   },
   { timestamps: true },
 );
@@ -90,6 +108,8 @@ userSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password;
   delete obj.refreshToken;
+  // gcalTokens bhi hide karo — frontend ko sirf gcalConnected & gcalUser chahiye
+  delete obj.gcalTokens;
   return obj;
 };
 
