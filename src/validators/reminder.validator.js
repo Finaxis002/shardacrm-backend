@@ -51,7 +51,7 @@ export const updateReminderValidator = Joi.object({
 
 export const getRemindersValidator = Joi.object({
   page: Joi.number().optional().min(1).default(1),
-  limit: Joi.number().optional().min(1).max(100).default(10),
+  limit:  Joi.number().optional().min(1).max(5000).default(1000),
   leadId: Joi.string().optional(),
   status: Joi.string().valid("pending", "completed").optional(),
 });

@@ -20,6 +20,7 @@ import googleSheetsRoutes from "./routes/googleSheets.routes.js";
 import noteRoutes from "./routes/note.routes.js";
 import taskRoutes from "./routes/task.routes.js";
 import attendanceRoutes from "./routes/attendance.routes.js";
+import eventRouter from "./routes/event.routes.js";
 const app = express();
 
 // Security middleware
@@ -58,6 +59,7 @@ app.use("/api/v1/notes", noteRoutes);
 app.use("/api/v1/tasks", taskRoutes);
 app.use("/api/v1/attendance", attendanceRoutes);
 app.use("/api/v1/google-sheets", googleSheetsRoutes);
+app.use("/api/v1/events", eventRouter);
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
