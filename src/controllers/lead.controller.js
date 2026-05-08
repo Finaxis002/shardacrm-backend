@@ -37,21 +37,34 @@ export const getLeads = asyncHandler(async (req, res) => {
   }
   if (source) filter.source = source;
 
+  let accessFilter = null;
+
   if (canViewAllLeads) {
     if (assignedTo) {
       filter.assignedTo = assignedTo;
     }
   } else {
-    filter.assignedTo = userId;
+    accessFilter = {
+      $or: [{ assignedTo: userId }, { coAssignees: userId }],
+    };
   }
 
   // Search in name, email, or phone
   if (search) {
-    filter.$or = [
-      { name: { $regex: search, $options: "i" } },
-      { email: { $regex: search, $options: "i" } },
-      { phone: { $regex: search, $options: "i" } },
-    ];
+    const searchFilter = {
+      $or: [
+        { name: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+        { phone: { $regex: search, $options: "i" } },
+      ],
+    };
+    if (accessFilter) {
+      filter.$and = [accessFilter, searchFilter];
+    } else {
+      filter.$or = searchFilter.$or;
+    }
+  } else if (accessFilter) {
+    Object.assign(filter, accessFilter);
   }
 
   const {
