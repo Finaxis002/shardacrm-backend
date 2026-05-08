@@ -600,3 +600,23 @@ export const syncNewRows = async (sync) => {
     logger.error(`Auto-sync error for ${sync._id}: ${err.message}`);
   }
 };
+export const getSheetData = asyncHandler(async (req, res) => {
+  const { syncId } = req.params;
+  const organization = req.user.organization;
+
+  const sync = await GoogleSheetSync.findOne({ _id: syncId, organization });
+  if (!sync) throw new ApiError(404, "Sheet sync not found");
+
+  const rows = await fetchSheetRows(sync.sheetId, sync.tabName, sync.accessToken, 1, 100);
+  if (!rows.length) return res.status(200).json(new ApiResponse(200, [], "No data"));
+
+  const headers = rows[0];
+  const dataRows = rows.slice(1).map(row =>
+    headers.reduce((obj, header, idx) => {
+      obj[header] = row[idx] ?? "";
+      return obj;
+    }, {})
+  );
+
+  res.status(200).json(new ApiResponse(200, dataRows, "Sheet data fetched"));
+});

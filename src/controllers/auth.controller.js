@@ -210,15 +210,15 @@ export const login = asyncHandler(async (req, res) => {
     "+password",
   );
 
-  if (!user) {
-    throw new ApiError(401, "Invalid email or password");
-  }
+ if (!user) {
+  throw new ApiError(401, "No account found with this email"); 
+}
 
-  const isPasswordValid = await user.comparePassword(password);
+const isPasswordValid = await user.comparePassword(password);
 
-  if (!isPasswordValid) {
-    throw new ApiError(401, "Invalid email or password");
-  }
+if (!isPasswordValid) {
+  throw new ApiError(401, "Incorrect password. Please try again"); 
+}
 
   const { accessToken, refreshToken } = await generateTokens(user._id);
 
