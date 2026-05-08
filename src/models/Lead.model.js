@@ -52,6 +52,10 @@ const leadSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    initialNote: {
+      type: String,
+      default: "",
+    },
     priority: {
       type: String,
       enum: ["Normal", "High", "Urgent"],
@@ -69,9 +73,9 @@ const leadSchema = new mongoose.Schema(
       },
     ],
     recording: {
-  label: { type: String, default: "" },
-  url: { type: String, default: "" },
-},
+      label: { type: String, default: "" },
+      url: { type: String, default: "" },
+    },
     customFields: {
       type: Map,
       of: String,
@@ -87,18 +91,18 @@ const leadSchema = new mongoose.Schema(
       default: true,
     },
     createdBy: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "User",
-  default: null,
-},
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     sheetName: {
-  type: String,
-  default: "",
-},
-isDuplicate: {
-  type: Boolean,
-  default: false,
-},
+      type: String,
+      default: "",
+    },
+    isDuplicate: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true },
 );
