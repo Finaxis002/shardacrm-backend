@@ -6,6 +6,7 @@ import {
   refreshToken,
   deleteConnection,
   getSyncStatus,
+  getSheetData,
 } from "../controllers/googleSheets.controller.js";
 import { verifyJWT } from "../middleware/auth.middleware.js";
 import { checkPermission } from "../middleware/rbac.middleware.js";
@@ -21,5 +22,5 @@ router.put("/:syncId/mapping",         saveMapping);
 router.put("/:syncId/token",           refreshToken);
 router.delete("/:syncId",              deleteConnection);
 router.get("/:syncId/status",          getSyncStatus);
-
+router.get("/:syncId/data",        getSheetData);
 export default router;
