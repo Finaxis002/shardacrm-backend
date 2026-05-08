@@ -61,81 +61,78 @@ to: config.attendance.email,
       html: `
 <!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Attendance OTP</title></head>
-<body style="margin:0;padding:24px;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-  <div style="max-width:480px;margin:auto;background:#fff;border-radius:16px;overflow:hidden;border:1px solid #e2e8f0">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Attendance OTP</title>
+</head>
+<body style="margin:0;padding:32px 16px;background:#F1F5F9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:16px;overflow:hidden;border:0.5px solid #E2E8F0">
+
+    <!-- Top accent bar -->
+    <div style="height:4px;background:linear-gradient(90deg,#4F46E5,#6366F1,#818CF8)"></div>
 
     <!-- Header -->
-    <div style="background:#1a1f3a;padding:28px 32px 24px">
-      <p style="color:rgba(255,255,255,0.7);font-size:13px;font-weight:500;margin:0 0 14px;letter-spacing:0.04em">&#128336; Attendance System</p>
-      <h1 style="color:#fff;font-size:22px;font-weight:600;margin:0 0 6px">Attendance Approval</h1>
-      <p style="color:rgba(255,255,255,0.5);font-size:13px;margin:0">A new check-in request is awaiting your approval</p>
+    <div style="padding:28px 32px 24px;border-bottom:1px solid #F1F5F9">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+        <div style="width:36px;height:36px;border-radius:8px;background:#EEF2FF;display:flex;align-items:center;justify-content:center;font-size:18px">📋</div>
+        <span style="font-size:13px;color:#64748B;font-weight:500;letter-spacing:0.02em">Attendance System</span>
+      </div>
+      <h1 style="font-size:20px;font-weight:600;color:#0F172A;margin:0 0 6px">Attendance Approval Request</h1>
+      <p style="font-size:13px;color:#64748B;margin:0;line-height:1.5">A check-in request is awaiting your approval. Please review the details below.</p>
     </div>
 
-    <!-- Body -->
-    <div style="padding:28px 32px">
-
-      <!-- Employee -->
-      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0">
+    <!-- Info Cards -->
+    <div style="padding:24px 32px 0">
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:12px 0;margin-bottom:24px">
         <tr>
-          <td width="52" style="padding:14px 0 14px 16px;vertical-align:middle">
-            <div style="width:36px;height:36px;border-radius:8px;background:#e8edfe;text-align:center;line-height:36px;font-size:16px;color:#5a7bf6;font-weight:700">E</div>
+          <td width="50%" style="background:#F8FAFC;border-radius:10px;border:0.5px solid #E2E8F0;padding:14px 16px;vertical-align:top">
+            <div style="font-size:11px;color:#94A3B8;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:8px">Employee</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div style="width:24px;height:24px;border-radius:50%;background:#EEF2FF;text-align:center;line-height:24px;font-size:11px;font-weight:600;color:#4F46E5">${(req.user.name || req.user.email || '?')[0].toUpperCase()}</div>
+              <span style="font-size:14px;color:#0F172A;font-weight:500">${req.user.name || req.user.email}</span>
+            </div>
           </td>
-          <td style="padding:14px 16px 14px 8px;vertical-align:middle">
-            <div style="font-size:10px;color:#94a3b8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:3px">Employee</div>
-            <div style="font-size:14px;color:#1a2050;font-weight:600">${req.user.name || req.user.email}</div>
-          </td>
-        </tr>
-      </table>
-
-      <!-- Date -->
-      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0">
-        <tr>
-          <td width="52" style="padding:14px 0 14px 16px;vertical-align:middle">
-            <div style="width:36px;height:36px;border-radius:8px;background:#dcfce7;text-align:center;line-height:36px;font-size:16px;color:#16a34a;font-weight:700">D</div>
-          </td>
-          <td style="padding:14px 16px 14px 8px;vertical-align:middle">
-            <div style="font-size:10px;color:#94a3b8;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:3px">Date</div>
-            <div style="font-size:14px;color:#1a2050;font-weight:600">${today}</div>
+          <td width="50%" style="background:#F8FAFC;border-radius:10px;border:0.5px solid #E2E8F0;padding:14px 16px;vertical-align:top">
+            <div style="font-size:11px;color:#94A3B8;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:8px">Date</div>
+            <div style="font-size:14px;color:#0F172A;font-weight:500">📅 ${today}</div>
           </td>
         </tr>
       </table>
 
       <!-- OTP Box -->
-      <div style="background:#1a1f3a;border-radius:12px;padding:24px 20px;text-align:center;margin-bottom:20px">
-        <div style="font-size:10px;color:rgba(255,255,255,0.4);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:16px">One-time password</div>
-        <table cellpadding="0" cellspacing="0" style="margin:0 auto 14px">
+      <div style="border:0.5px solid #C7D2FE;border-radius:14px;padding:28px 20px;margin-bottom:20px;text-align:center;background:#FAFAFE">
+        <div style="font-size:11px;color:#6366F1;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:18px">One-Time Password</div>
+        <table cellpadding="0" cellspacing="0" style="margin:0 auto 18px">
           <tr>
             ${otp.split('').map(d => `
             <td style="padding:0 4px">
-              <div style="width:44px;height:52px;background:rgba(255,255,255,0.08);border-radius:8px;border:1px solid rgba(255,255,255,0.15);text-align:center;line-height:52px;font-size:26px;font-weight:700;color:#fff">${d}</div>
+              <div style="width:46px;height:54px;background:#EEF2FF;border:1.5px solid #C7D2FE;border-radius:10px;text-align:center;line-height:54px;font-size:26px;font-weight:600;color:#3730A3">${d}</div>
             </td>`).join('')}
           </tr>
         </table>
-        <div style="color:rgba(255,255,255,0.4);font-size:12px">&#9201; Expires in <strong style="color:rgba(255,255,255,0.65)">5 minutes</strong></div>
+        <div style="display:inline-flex;align-items:center;gap:6px;background:#FFF7ED;border:0.5px solid #FED7AA;border-radius:20px;padding:5px 14px">
+          <span style="font-size:13px">⏱</span>
+          <span style="font-size:12px;color:#EA580C;font-weight:500">Expires in <strong>5 minutes</strong></span>
+        </div>
       </div>
 
       <!-- Warning -->
-      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px">
+      <table width="100%" cellpadding="0" cellspacing="0" style="background:#FFFBEB;border:0.5px solid #FCD34D;border-radius:10px;margin-bottom:24px">
         <tr>
-          <td width="36" style="padding:12px 0 12px 14px;vertical-align:top;font-size:14px;color:#d97706">&#9888;</td>
-          <td style="padding:12px 12px 12px 6px;font-size:12px;color:#64748b;line-height:1.6">
-            Share this OTP <strong style="color:#1a2050">only with the employee</strong> if you approve their attendance. Do not share if the request seems unauthorised.
+          <td width="36" style="padding:14px 0 14px 16px;vertical-align:top;font-size:15px">⚠️</td>
+          <td style="padding:14px 16px 14px 6px;font-size:12px;color:#64748B;line-height:1.7">
+            Share this OTP <strong style="color:#0F172A">only with the employee</strong> after verifying the request is legitimate. Do not share if the request seems unauthorised.
           </td>
         </tr>
       </table>
-
     </div>
 
     <!-- Footer -->
-    <table width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #e2e8f0">
-      <tr>
-        <td style="padding:14px 32px;font-size:11px;color:#94a3b8">Attendance System &middot; Auto-generated</td>
-        <td style="padding:14px 32px;text-align:right">
-          <span style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:20px;background:#dcfce7;color:#16a34a;border:1px solid #bbf7d0">SECURE OTP</span>
-        </td>
-      </tr>
-    </table>
+    <div style="padding:14px 32px;border-top:1px solid #F1F5F9;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:11px;color:#94A3B8">Attendance System · Auto-generated · Do not reply</span>
+      <span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;background:#ECFDF5;color:#065F46;border:0.5px solid #A7F3D0">SECURE</span>
+    </div>
 
   </div>
 </body>
