@@ -18,11 +18,16 @@ import {
 const router = Router();
 
 router.use(verifyJWT);
-router.use(checkRole(["admin"]));
 
 router.get("/", getSettings);
-router.patch("/", validateRequest(updateSettingsValidator, "body"), updateSettings);
 router.get("/pipeline-stages", getPipelineStages);
+
+router.use(checkRole(["admin"]));
+router.patch(
+  "/",
+  validateRequest(updateSettingsValidator, "body"),
+  updateSettings,
+);
 router.patch(
   "/pipeline-stages",
   validateRequest(updatePipelineStagesValidator, "body"),

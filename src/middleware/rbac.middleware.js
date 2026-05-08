@@ -1,5 +1,7 @@
 import { ROLE_HIERARCHY } from "../constants/roles.js";
 import ApiError from "../utils/apiError.js";
+import asyncHandler from "../utils/asyncHandler.js";
+import { canUser, permissionSlugToLabel } from "../utils/permissions.js";
 
 const ROLE_DEFAULT_PERMISSIONS = {
   admin: [
@@ -12,7 +14,13 @@ const ROLE_DEFAULT_PERMISSIONS = {
     "manage_users",
     "admin_panel",
   ],
-  manager: ["add_leads", "assign_leads", "record_payments", "view_all_leads", "view_team"],
+  manager: [
+    "add_leads",
+    "assign_leads",
+    "record_payments",
+    "view_all_leads",
+    "view_team",
+  ],
   tl: ["add_leads", "assign_leads", "view_team"],
   exec: ["add_leads"],
   viewer: [],
@@ -33,28 +41,31 @@ export const checkRole = (allowedRoles) => {
 };
 
 export const checkPermission = (permissionName) => {
-  return (req, res, next) => {
+  return asyncHandler(async (req, res, next) => {
     if (!req.user) {
       throw new ApiError(401, "Authentication required");
     }
 
-    // Admin always has permission
     if (req.user.role === "admin") {
       return next();
     }
 
-    // Check if user has explicit permissions set
-    if (req.user.permissions && req.user.permissions.includes(permissionName)) {
-      return next();
+    const permissionLabel = permissionSlugToLabel(permissionName);
+    if (!permissionLabel) {
+      throw new ApiError(403, `Unsupported permission: ${permissionName}`);
     }
 
-    const defaults = ROLE_DEFAULT_PERMISSIONS[req.user.role] || [];
-    if (defaults.includes(permissionName)) {
+    const hasPermission = await canUser(
+      req.user,
+      req.user.organization,
+      permissionName,
+    );
+    if (hasPermission) {
       return next();
     }
 
     throw new ApiError(403, `You don't have permission to: ${permissionName}`);
-  };
+  });
 };
 
 export const checkMinimumRole = (minimumRole) => {

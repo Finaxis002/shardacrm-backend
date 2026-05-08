@@ -9,6 +9,7 @@ import asyncHandler from "../utils/asyncHandler.js";
 import { formatPaginatedResponse, parsePagination } from "../utils/paginate.js";
 import logger from "../utils/logger.js";
 import Settings from "../models/Settings.model.js";
+import { canUser } from "../utils/permissions.js";
 import { google } from "googleapis";
 import { createNotifications } from "../utils/notification.utils.js";
 
@@ -22,6 +23,8 @@ export const getLeads = asyncHandler(async (req, res) => {
   const userId = req.user._id;
   const organization = req.user.organization;
   const isAdmin = req.user.role === "admin";
+  const canViewAllLeads =
+    isAdmin || (await canUser(req.user, organization, "view_all_leads"));
 
   // Build filter
   const filter = { organization };
@@ -33,13 +36,13 @@ export const getLeads = asyncHandler(async (req, res) => {
     }
   }
   if (source) filter.source = source;
-  // 👇 Restrict assignedTo for non‑admin users
-  if (!isAdmin) {
-    // Non‑admin can only see leads assigned to themselves
+
+  if (canViewAllLeads) {
+    if (assignedTo) {
+      filter.assignedTo = assignedTo;
+    }
+  } else {
     filter.assignedTo = userId;
-  } else if (assignedTo) {
-    // Admin can optionally filter by another user
-    filter.assignedTo = assignedTo;
   }
 
   // Search in name, email, or phone
@@ -352,8 +355,30 @@ export const createLead = asyncHandler(async (req, res) => {
 
   const organization = req.user.organization;
   const createdBy = req.user._id;
+  const hasAssignPermission =
+    req.user.role === "admin" ||
+    (await canUser(req.user, organization, "assign_leads"));
   const assignedUserId =
     assignedTo || req.body.assignee || req.body.assigned_to || createdBy;
+
+  if (
+    assignedUserId &&
+    String(assignedUserId) !== String(createdBy) &&
+    !hasAssignPermission
+  ) {
+    throw new ApiError(
+      403,
+      "Not authorized to assign this lead to another user",
+    );
+  }
+
+  if (
+    Array.isArray(coAssignees) &&
+    coAssignees.length > 0 &&
+    !hasAssignPermission
+  ) {
+    throw new ApiError(403, "Not authorized to add co-assignees to this lead");
+  }
 
   // Check if lead with same phone already exists in organization
   const existingLead = await Lead.findOne({ phone, organization });
@@ -391,12 +416,12 @@ export const createLead = asyncHandler(async (req, res) => {
     createdBy,
     customFields: customFields || {},
   });
-if (recording && (recording.label || recording.url)) {
-  lead.recording = {
-    label: recording.label || "",
-    url: recording.url || "",
-  };
-}
+  if (recording && (recording.label || recording.url)) {
+    lead.recording = {
+      label: recording.label || "",
+      url: recording.url || "",
+    };
+  }
 
   await lead.save();
   await lead.populate("assignedTo", "name email");
@@ -554,7 +579,7 @@ export const updateLead = asyncHandler(async (req, res) => {
 
   const canEditAny =
     req.user.role === "admin" ||
-    (req.user.permissions && req.user.permissions.includes("edit_any_lead"));
+    (await canUser(req.user, organization, "edit_any_lead"));
   const isAssignee = lead.assignedTo && lead.assignedTo.equals(userId);
   const isCoAssignee = lead.coAssignees.some((user) => user.equals(userId));
   if (!canEditAny && !isAssignee && !isCoAssignee) {
@@ -585,16 +610,16 @@ export const updateLead = asyncHandler(async (req, res) => {
   });
 
   if (req.body.recording !== undefined) {
-  lead.recording = {
-    label: req.body.recording.label || "",
-    url: req.body.recording.url || "",
-  };
-}
+    lead.recording = {
+      label: req.body.recording.label || "",
+      url: req.body.recording.url || "",
+    };
+  }
 
   if (req.body.coAssignees !== undefined) {
     const hasAssignPermission =
       req.user.role === "admin" ||
-      (req.user.permissions && req.user.permissions.includes("assign_leads"));
+      (await canUser(req.user, organization, "assign_leads"));
 
     if (!hasAssignPermission) {
       throw new ApiError(
@@ -632,7 +657,7 @@ export const updateLead = asyncHandler(async (req, res) => {
   if (requestedAssignedTo !== undefined) {
     const hasAssignPermission =
       req.user.role === "admin" ||
-      (req.user.permissions && req.user.permissions.includes("assign_leads"));
+      (await canUser(req.user, organization, "assign_leads"));
 
     if (!hasAssignPermission) {
       throw new ApiError(403, "Not authorized to reassign this lead");

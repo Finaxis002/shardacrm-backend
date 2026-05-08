@@ -5,6 +5,7 @@ import ApiError from "../utils/apiError.js";
 import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { formatPaginatedResponse, parsePagination } from "../utils/paginate.js";
+import { canUser } from "../utils/permissions.js";
 import logger from "../utils/logger.js";
 
 /**
@@ -163,46 +164,57 @@ export const createTeamMember = asyncHandler(async (req, res) => {
 /**
  * Update user
  * @route PUT /api/v1/users/:id
- * @access Private (Admin or self)
+ * @access Private (Admin, Manage Users permission, or Self)
  */
 export const updateUser = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { name, phone, role, password } = req.body;
   const organization = req.user.organization;
-  const userId = req.user._id;
+  const currentUserId = req.user._id;
 
-  const user = await User.findOne({ _id: id, organization });
-  if (!user) {
+  const userToUpdate = await User.findOne({ _id: id, organization });
+  if (!userToUpdate) {
     throw new ApiError(404, "User not found");
   }
 
-  // Only admin or the user themselves can update
-  if (req.user.role !== "admin" && !userId.equals(id)) {
+  const isSelf = currentUserId.equals(id);
+  const isAdmin = req.user.role === "admin";
+  const canManageUsers = await canUser(req.user, organization, "manage_users");
+
+  // Authorization: Check if user has right to perform any update
+  if (!isAdmin && !isSelf && !canManageUsers) {
     throw new ApiError(403, "Not authorized to update this user");
   }
 
-  // Admin can change role, but user cannot change their own role
-  if (role && req.user.role !== "admin") {
-    throw new ApiError(403, "Only admin can change user roles");
+  // Role Change Logic: Only Admin or users with manage_users can change roles
+  if (role && role !== userToUpdate.role) {
+    if (!isAdmin && !canManageUsers) {
+      throw new ApiError(403, "Not authorized to change user roles");
+    }
+    // Prevent users from changing their own role (even if they have manage_users)
+    if (isSelf && !isAdmin) {
+      throw new ApiError(403, "You cannot change your own role");
+    }
+    userToUpdate.role = role;
   }
 
-  if (name) user.name = name;
-  if (phone) user.phone = phone;
-  if (role && req.user.role === "admin") user.role = role;
-  if (password) user.password = password;
+  // Update profile fields
+  if (name) userToUpdate.name = name;
+  if (phone) userToUpdate.phone = phone;
+  if (password) userToUpdate.password = password;
 
-  await user.save();
+  await userToUpdate.save();
 
   const userResponse = {
-    _id: user._id,
-    name: user.name,
-    email: user.email,
-    phone: user.phone,
-    role: user.role,
-    organization: user.organization,
+    _id: userToUpdate._id,
+    name: userToUpdate.name,
+    email: userToUpdate.email,
+    phone: userToUpdate.phone,
+    role: userToUpdate.role,
+    organization: userToUpdate.organization,
   };
 
-  logger.info(`User updated: ${id}`);
+  logger.info(`User updated: ${id} by ${currentUserId}`);
 
   res
     .status(200)
@@ -218,6 +230,20 @@ export const updateUserRole = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { role } = req.body;
   const organization = req.user.organization;
+  const currentUserId = req.user._id;
+
+  // Check if current user is Admin or has 'manage_users' permission
+  const isAdmin = req.user.role === "admin";
+  const canManageUsers = await canUser(req.user, organization, "manage_users");
+
+  if (!isAdmin && !canManageUsers) {
+    throw new ApiError(403, "Not authorized to change user roles");
+  }
+
+  // Prevent users from changing their own role to avoid self-elevation
+  if (currentUserId.equals(id) && !isAdmin) {
+    throw new ApiError(403, "You cannot change your own role");
+  }
 
   const user = await User.findOne({ _id: id, organization });
   if (!user) {
@@ -236,7 +262,7 @@ export const updateUserRole = asyncHandler(async (req, res) => {
     organization: user.organization,
   };
 
-  logger.info(`User role updated: ${id} to ${role}`);
+  logger.info(`User role updated: ${id} to ${role} by ${currentUserId}`);
 
   res
     .status(200)
@@ -252,6 +278,20 @@ export const updateUserPermissions = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { permissions } = req.body;
   const organization = req.user.organization;
+  const currentUserId = req.user._id;
+
+  // Check for Admin role or manage_users permission
+  const isAdmin = req.user.role === "admin";
+  const canManageUsers = await canUser(req.user, organization, "manage_users");
+
+  if (!isAdmin && !canManageUsers) {
+    throw new ApiError(403, "Not authorized to update user permissions");
+  }
+
+  // Prevent non-admin users from updating their own permissions
+  if (currentUserId.equals(id) && !isAdmin) {
+    throw new ApiError(403, "You cannot update your own permissions");
+  }
 
   const user = await User.findOne({ _id: id, organization });
   if (!user) {
@@ -271,7 +311,7 @@ export const updateUserPermissions = asyncHandler(async (req, res) => {
     organization: user.organization,
   };
 
-  logger.info(`User permissions updated: ${id}`);
+  logger.info(`User permissions updated: ${id} by ${currentUserId}`);
 
   res
     .status(200)
@@ -292,6 +332,20 @@ export const updateUserPermissions = asyncHandler(async (req, res) => {
 export const deleteUser = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const organization = req.user.organization;
+  const currentUserId = req.user._id;
+
+  // Check for Admin role or manage_users permission
+  const isAdmin = req.user.role === "admin";
+  const canManageUsers = await canUser(req.user, organization, "manage_users");
+
+  if (!isAdmin && !canManageUsers) {
+    throw new ApiError(403, "Not authorized to delete users");
+  }
+
+  // Prevent users from deleting themselves
+  if (currentUserId.equals(id)) {
+    throw new ApiError(400, "You cannot delete your own account from here");
+  }
 
   const user = await User.findOne({ _id: id, organization });
   if (!user) {
@@ -306,7 +360,7 @@ export const deleteUser = asyncHandler(async (req, res) => {
 
   await User.findByIdAndDelete(id);
 
-  logger.info(`User deleted: ${id}`);
+  logger.info(`User deleted: ${id} by ${currentUserId}`);
 
   res.status(200).json(new ApiResponse(200, null, "User deleted successfully"));
 });

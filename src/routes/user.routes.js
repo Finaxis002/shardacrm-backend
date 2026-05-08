@@ -12,7 +12,7 @@ import {
   updateMyProfile,
 } from "../controllers/user.controller.js";
 import { verifyJWT } from "../middleware/auth.middleware.js";
-import { checkRole } from "../middleware/rbac.middleware.js";
+import { checkRole, checkPermission } from "../middleware/rbac.middleware.js";
 import { validateRequest } from "../middleware/validation.middleware.js";
 import {
   createTeamMemberValidator,
@@ -42,10 +42,10 @@ router.get("/stats/summary", getTeamStats);
 
 router.get("/:id", getUser);
 
-// POST routes (Admin only)
+// POST routes (Manage users permission required)
 router.post(
   "/",
-  checkRole(["admin"]),
+  checkPermission("manage_users"),
   validateRequest(createTeamMemberValidator, "body"),
   createTeamMember,
 );
@@ -53,22 +53,22 @@ router.post(
 // PUT routes (Admin or self)
 router.put("/:id", validateRequest(updateUserValidator, "body"), updateUser);
 
-// PATCH routes (Admin only)
+// PATCH routes (Manage users permission required)
 router.patch(
   "/:id/role",
-  checkRole(["admin"]),
+  checkPermission("manage_users"),
   validateRequest(updateUserRoleValidator, "body"),
   updateUserRole,
 );
 
 router.patch(
   "/:id/permissions",
-  checkRole(["admin"]),
+  checkPermission("manage_users"),
   validateRequest(updateUserPermissionsValidator, "body"),
   updateUserPermissions,
 );
 
-// DELETE routes (Admin only)
-router.delete("/:id", checkRole(["admin"]), deleteUser);
+// DELETE routes (Manage users permission required)
+router.delete("/:id", checkPermission("manage_users"), deleteUser);
 
 export default router;

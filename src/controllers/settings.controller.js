@@ -17,19 +17,93 @@ const DEFAULT_PIPELINE_STAGES = [
 ];
 
 const DEFAULT_PERMISSIONS = {
-  "View all leads": { admin: true, manager: true, tl: false, exec: false, viewer: false },
-  "Add leads": { admin: true, manager: true, tl: true, exec: true, viewer: false },
-  "Edit any lead": { admin: true, manager: true, tl: false, exec: false, viewer: false },
-  "Delete leads": { admin: true, manager: false, tl: false, exec: false, viewer: false },
-  "Assign leads": { admin: true, manager: true, tl: true, exec: false, viewer: false },
-  "Change lead owner": { admin: true, manager: true, tl: false, exec: false, viewer: false },
-  "Record payments": { admin: true, manager: true, tl: false, exec: false, viewer: false },
-  "Import from sheets": { admin: true, manager: true, tl: false, exec: false, viewer: false },
-  "View team": { admin: true, manager: true, tl: true, exec: false, viewer: false },
-  "Admin panel": { admin: true, manager: false, tl: false, exec: false, viewer: false },
+  "View all leads": {
+    admin: true,
+    manager: true,
+    tl: false,
+    exec: false,
+    viewer: false,
+  },
+  "Add leads": {
+    admin: true,
+    manager: true,
+    tl: true,
+    exec: true,
+    viewer: false,
+  },
+  "Edit any lead": {
+    admin: true,
+    manager: true,
+    tl: false,
+    exec: false,
+    viewer: false,
+  },
+  "Delete leads": {
+    admin: true,
+    manager: false,
+    tl: false,
+    exec: false,
+    viewer: false,
+  },
+  "Assign leads": {
+    admin: true,
+    manager: true,
+    tl: true,
+    exec: false,
+    viewer: false,
+  },
+  "Change lead owner": {
+    admin: true,
+    manager: true,
+    tl: false,
+    exec: false,
+    viewer: false,
+  },
+  "Record payments": {
+    admin: true,
+    manager: true,
+    tl: false,
+    exec: false,
+    viewer: false,
+  },
+  "Import from sheets": {
+    admin: true,
+    manager: true,
+    tl: false,
+    exec: false,
+    viewer: false,
+  },
+  "View team": {
+    admin: true,
+    manager: true,
+    tl: true,
+    exec: false,
+    viewer: false,
+  },
+  "Manage users": {
+    admin: true,
+    manager: false,
+    tl: false,
+    exec: false,
+    viewer: false,
+  },
+  "Admin panel": {
+    admin: true,
+    manager: false,
+    tl: false,
+    exec: false,
+    viewer: false,
+  },
 };
 
-const DEFAULT_LEAD_COLUMNS = ["name", "phone", "source", "value", "status", "assign"];
+const DEFAULT_LEAD_COLUMNS = [
+  "name",
+  "phone",
+  "source",
+  "value",
+  "status",
+  "assign",
+];
 
 const createDefaultSettings = (organization, companyName = "") => ({
   organization,
@@ -60,17 +134,22 @@ const createDefaultSettings = (organization, companyName = "") => ({
   currency: "₹",
   timezone: "Asia/Kolkata",
 });
-
 const normalizeSettings = (settings) => {
   if (!settings) return settings;
   const obj = settings.toObject ? settings.toObject() : settings;
+
+  const syncedPermissions = {
+    ...DEFAULT_PERMISSIONS,
+    ...(obj.permissions || {}),
+  };
+
   return {
     organization: obj.organization,
     distributionMethod: obj.distributionMethod,
     distributionPool: obj.distributionPool || [],
     rrIndex: obj.rrIndex || 0,
     pipelineStages: obj.pipelineStages || DEFAULT_PIPELINE_STAGES,
-    permissions: obj.permissions || DEFAULT_PERMISSIONS,
+    permissions: syncedPermissions,
     rbacExecOnly: obj.rbacExecOnly !== undefined ? obj.rbacExecOnly : true,
     rbacCoEditorsCanEdit:
       obj.rbacCoEditorsCanEdit !== undefined ? obj.rbacCoEditorsCanEdit : true,
@@ -111,7 +190,9 @@ export const getSettings = asyncHandler(async (req, res) => {
 
   res
     .status(200)
-    .json(new ApiResponse(200, normalizeSettings(settings), "Settings fetched"));
+    .json(
+      new ApiResponse(200, normalizeSettings(settings), "Settings fetched"),
+    );
 });
 
 export const updateSettings = asyncHandler(async (req, res) => {
@@ -168,7 +249,9 @@ export const updateSettings = asyncHandler(async (req, res) => {
   logger.info(`Settings updated for organization ${organization}`);
   res
     .status(200)
-    .json(new ApiResponse(200, normalizeSettings(settings), "Settings updated"));
+    .json(
+      new ApiResponse(200, normalizeSettings(settings), "Settings updated"),
+    );
 });
 
 export const getPipelineStages = asyncHandler(async (req, res) => {
@@ -212,7 +295,13 @@ export const updatePipelineStages = asyncHandler(async (req, res) => {
 
   res
     .status(200)
-    .json(new ApiResponse(200, normalizeSettings(settings), "Pipeline stages updated successfully"));
+    .json(
+      new ApiResponse(
+        200,
+        normalizeSettings(settings),
+        "Pipeline stages updated successfully",
+      ),
+    );
 });
 
 export const exportOrganizationData = asyncHandler(async (req, res) => {
@@ -231,13 +320,17 @@ export const exportOrganizationData = asyncHandler(async (req, res) => {
   }
 
   res.status(200).json(
-    new ApiResponse(200, {
-      users,
-      leads,
-      payments,
-      reminders,
-      settings,
-    }, "Export data fetched successfully"),
+    new ApiResponse(
+      200,
+      {
+        users,
+        leads,
+        payments,
+        reminders,
+        settings,
+      },
+      "Export data fetched successfully",
+    ),
   );
 });
 
