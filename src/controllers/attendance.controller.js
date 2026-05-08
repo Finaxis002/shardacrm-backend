@@ -2,7 +2,7 @@ import Attendance from "../models/Attendance.model.js";
 import User from "../models/User.model.js";
 import nodemailer from "nodemailer";
 import crypto from "crypto";
-
+import { config } from "../config/env.js";
 // ─── helpers ──────────────────────────────────────────────────────────────────
 const dateStr = (d = new Date()) =>
   d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
@@ -23,8 +23,8 @@ const otpStore = new Map();
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: "adityajaysawal27@gmail.com",
-    pass: "raav cneg dfzd ttfg",
+    user: config.attendance.email,
+pass: config.attendance.pass,
   },
 });
 
@@ -55,8 +55,8 @@ export const requestAttendanceOtp = async (req, res) => {
 
     // Send email to admin
     await transporter.sendMail({
-      from: `"Attendance System" <adityajaysawal27@gmail.com>`,
-      to: "adityajaysawal27@gmail.com",
+      from: `"Attendance System" <${config.attendance.email}>`,
+to: config.attendance.email,
       subject: `🕐 Attendance Approval Request — ${req.user.name || req.user.email} · ${today}`,
       html: `
 <!DOCTYPE html>
