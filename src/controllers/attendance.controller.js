@@ -22,19 +22,31 @@ const otpStore = new Map();
 const getAttendanceTransporter = () => {
   const { email, pass } = config.attendance;
   if (email && pass) {
+    const port = Number(process.env.ATTENDANCE_EMAIL_PORT || 587);
     return nodemailer.createTransport({
-      service: "gmail",
+      host: "smtp.gmail.com",
+      port,
+      secure: port === 465,
+      requireTLS: port !== 465,
       auth: { user: email, pass },
+      connectionTimeout: 20000,
+      greetingTimeout: 20000,
+      socketTimeout: 20000,
     });
   }
 
   const { host, port, user, pass: smtpPass } = config.smtp;
   if (host && port && user && smtpPass) {
+    const numericPort = Number(port);
     return nodemailer.createTransport({
       host,
-      port: Number(port),
-      secure: Number(port) === 465,
+      port: numericPort,
+      secure: numericPort === 465,
+      requireTLS: numericPort !== 465,
       auth: { user, pass: smtpPass },
+      connectionTimeout: 20000,
+      greetingTimeout: 20000,
+      socketTimeout: 20000,
     });
   }
 
