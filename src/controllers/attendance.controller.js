@@ -20,12 +20,20 @@ const timeStr = (d = new Date()) =>
 const otpStore = new Map();
 
 // ─── Nodemailer transporter ───────────────────────────────────────────────────
+
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true, // true for port 465, false for other ports
   auth: {
     user: config.attendance.email,
-pass: config.attendance.pass,
+    pass: config.attendance.pass,
   },
+  // Essential for cloud deployments to prevent hanging
+  connectionTimeout: 10000, // 10 seconds
+  greetingTimeout: 10000,
+  socketTimeout: 15000,
+  pool: true, // Keeps the connection open for faster subsequent sends
 });
 
 // ─── OTP: Request ─────────────────────────────────────────────────────────────
@@ -37,7 +45,9 @@ export const requestAttendanceOtp = async (req, res) => {
     // Already marked today?
     const existing = await Attendance.findOne({ userId, date: today });
     if (existing) {
-      return res.status(409).json({ message: "Attendance already marked for today" });
+      return res
+        .status(409)
+        .json({ message: "Attendance already marked for today" });
     }
 
     // Find any active admin
@@ -56,7 +66,7 @@ export const requestAttendanceOtp = async (req, res) => {
     // Send email to admin
     await transporter.sendMail({
       from: `"Attendance System" <${config.attendance.email}>`,
-to: config.attendance.email,
+      to: config.attendance.email,
       subject: `🕐 Attendance Approval Request — ${req.user.name || req.user.email} · ${today}`,
       html: `
 <!DOCTYPE html>
@@ -89,7 +99,7 @@ to: config.attendance.email,
           <td width="50%" style="background:#F8FAFC;border-radius:10px;border:0.5px solid #E2E8F0;padding:14px 16px;vertical-align:top">
             <div style="font-size:11px;color:#94A3B8;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:8px">Employee</div>
             <div style="display:flex;align-items:center;gap:8px">
-              <div style="width:24px;height:24px;border-radius:50%;background:#EEF2FF;text-align:center;line-height:24px;font-size:11px;font-weight:600;color:#4F46E5">${(req.user.name || req.user.email || '?')[0].toUpperCase()}</div>
+              <div style="width:24px;height:24px;border-radius:50%;background:#EEF2FF;text-align:center;line-height:24px;font-size:11px;font-weight:600;color:#4F46E5">${(req.user.name || req.user.email || "?")[0].toUpperCase()}</div>
               <span style="font-size:14px;color:#0F172A;font-weight:500">${req.user.name || req.user.email}</span>
             </div>
           </td>
@@ -105,10 +115,15 @@ to: config.attendance.email,
         <div style="font-size:11px;color:#6366F1;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:18px">One-Time Password</div>
         <table cellpadding="0" cellspacing="0" style="margin:0 auto 18px">
           <tr>
-            ${otp.split('').map(d => `
+            ${otp
+              .split("")
+              .map(
+                (d) => `
             <td style="padding:0 4px">
               <div style="width:46px;height:54px;background:#EEF2FF;border:1.5px solid #C7D2FE;border-radius:10px;text-align:center;line-height:54px;font-size:26px;font-weight:600;color:#3730A3">${d}</div>
-            </td>`).join('')}
+            </td>`,
+              )
+              .join("")}
           </tr>
         </table>
         <div style="display:inline-flex;align-items:center;gap:6px;background:#FFF7ED;border:0.5px solid #FED7AA;border-radius:20px;padding:5px 14px">
@@ -158,16 +173,22 @@ export const verifyAttendanceOtp = async (req, res) => {
     const record = otpStore.get(userId.toString());
 
     if (!record) {
-      return res.status(400).json({ message: "No OTP found. Please request a new one." });
+      return res
+        .status(400)
+        .json({ message: "No OTP found. Please request a new one." });
     }
 
     if (Date.now() > record.expiresAt) {
       otpStore.delete(userId.toString());
-      return res.status(400).json({ message: "OTP has expired. Please request a new one." });
+      return res
+        .status(400)
+        .json({ message: "OTP has expired. Please request a new one." });
     }
 
     if (record.otp !== otp.trim()) {
-      return res.status(400).json({ message: "Invalid OTP. Please try again." });
+      return res
+        .status(400)
+        .json({ message: "Invalid OTP. Please try again." });
     }
 
     // OTP valid — delete it immediately (one-time use)
@@ -178,7 +199,9 @@ export const verifyAttendanceOtp = async (req, res) => {
     // Double-check not already marked (race condition guard)
     const existing = await Attendance.findOne({ userId, date: today });
     if (existing) {
-      return res.status(409).json({ message: "Attendance already marked for today" });
+      return res
+        .status(409)
+        .json({ message: "Attendance already marked for today" });
     }
 
     const attendance = await Attendance.create({
@@ -188,7 +211,9 @@ export const verifyAttendanceOtp = async (req, res) => {
       status: "present",
     });
 
-    res.status(201).json({ message: "Attendance marked successfully", data: attendance });
+    res
+      .status(201)
+      .json({ message: "Attendance marked successfully", data: attendance });
   } catch (err) {
     console.error("verifyAttendanceOtp:", err);
     res.status(500).json({ message: "Server error" });
@@ -202,7 +227,9 @@ export const markAttendance = async (req, res) => {
     const today = dateStr();
     const existing = await Attendance.findOne({ userId, date: today });
     if (existing) {
-      return res.status(409).json({ message: "Attendance already marked for today" });
+      return res
+        .status(409)
+        .json({ message: "Attendance already marked for today" });
     }
     const record = await Attendance.create({
       userId,
@@ -221,14 +248,16 @@ export const myAttendance = async (req, res) => {
   try {
     const userId = req.user._id;
     const month = parseInt(req.query.month) || new Date().getMonth() + 1;
-    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const year = parseInt(req.query.year) || new Date().getFullYear();
     const prefix = `${year}-${String(month).padStart(2, "0")}`;
     const records = await Attendance.find({
       userId,
       date: { $regex: `^${prefix}` },
     }).lean();
     const byDate = {};
-    records.forEach((r) => { byDate[r.date] = r; });
+    records.forEach((r) => {
+      byDate[r.date] = r;
+    });
     res.json({ month, year, records: byDate });
   } catch (err) {
     console.error("myAttendance:", err);
@@ -240,7 +269,7 @@ export const myAttendance = async (req, res) => {
 export const adminMonthly = async (req, res) => {
   try {
     const month = parseInt(req.query.month) || new Date().getMonth() + 1;
-    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const year = parseInt(req.query.year) || new Date().getFullYear();
     const prefix = `${year}-${String(month).padStart(2, "0")}`;
     const totalUsers = await User.countDocuments({ isActive: true });
     const records = await Attendance.find({
@@ -274,7 +303,9 @@ export const adminDayDetail = async (req, res) => {
     const absentUsers = await User.find({
       isActive: true,
       _id: { $nin: presentIds },
-    }).select("name email phone role").lean();
+    })
+      .select("name email phone role")
+      .lean();
     res.json({
       date,
       present: validPresent.map((r) => ({
@@ -302,16 +333,20 @@ export const adminUserMonthly = async (req, res) => {
   try {
     const { userId } = req.params;
     const month = parseInt(req.query.month) || new Date().getMonth() + 1;
-    const year  = parseInt(req.query.year)  || new Date().getFullYear();
+    const year = parseInt(req.query.year) || new Date().getFullYear();
     const prefix = `${year}-${String(month).padStart(2, "0")}`;
-    const user = await User.findById(userId).select("name email phone role").lean();
+    const user = await User.findById(userId)
+      .select("name email phone role")
+      .lean();
     if (!user) return res.status(404).json({ message: "User not found" });
     const records = await Attendance.find({
       userId,
       date: { $regex: `^${prefix}` },
     }).lean();
     const byDate = {};
-    records.forEach((r) => { byDate[r.date] = r; });
+    records.forEach((r) => {
+      byDate[r.date] = r;
+    });
     res.json({ month, year, user, records: byDate });
   } catch (err) {
     console.error("adminUserMonthly:", err);
@@ -326,11 +361,13 @@ export const getAllUsers = async (req, res) => {
     const filter = { isActive: true };
     if (search) {
       filter.$or = [
-        { name:  { $regex: search, $options: "i" } },
+        { name: { $regex: search, $options: "i" } },
         { email: { $regex: search, $options: "i" } },
       ];
     }
-    const users = await User.find(filter).select("name email phone role").lean();
+    const users = await User.find(filter)
+      .select("name email phone role")
+      .lean();
     res.json(users);
   } catch (err) {
     console.error("getAllUsers:", err);
@@ -348,7 +385,7 @@ export const adminManualMark = async (req, res) => {
     const record = await Attendance.findOneAndUpdate(
       { userId, date },
       { status: status || "present", checkIn, checkOut, markedAt: new Date() },
-      { upsert: true, new: true }
+      { upsert: true, new: true },
     );
     res.json({ message: "Attendance updated", data: record });
   } catch (err) {
