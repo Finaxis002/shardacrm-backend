@@ -92,7 +92,12 @@ export const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     paymentId,
   } = req.body;
 
-  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !paymentId) {
+  if (
+    !razorpay_order_id ||
+    !razorpay_payment_id ||
+    !razorpay_signature ||
+    !paymentId
+  ) {
     throw new ApiError(400, "All Razorpay fields are required");
   }
 
@@ -287,11 +292,13 @@ export const getRazorpayStatus = asyncHandler(async (req, res) => {
   const connected =
     !!process.env.RAZORPAY_KEY_ID && !!process.env.RAZORPAY_KEY_SECRET;
 
-  res.status(200).json(
-    new ApiResponse(
-      200,
-      { connected },
-      connected ? "Razorpay is connected" : "Razorpay is not configured",
-    ),
-  );
+  res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        { connected },
+        connected ? "Razorpay is connected" : "Razorpay is not configured",
+      ),
+    );
 });
