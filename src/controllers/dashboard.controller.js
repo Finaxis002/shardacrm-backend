@@ -77,9 +77,7 @@ const leadFilter = {
   organization,
   isDone: false,
   reminderDate: { $gte: today, $lt: tomorrow },
-  ...(req.user.role !== "admin" && req.user.role !== "master"
-    ? { $or: [{ assignedTo: userId }, { notifyUsers: userId }] }
-    : {}),
+ $or: [{ assignedTo: userId }, { notifyUsers: userId }], 
 })
       .populate("leadId", "name phone")
       .sort({ reminderTime: 1 })
