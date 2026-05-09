@@ -21,15 +21,11 @@ const otpStore = new Map();
 
 // ─── Nodemailer transporter ───────────────────────────────────────────────────
 const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
-auth: {
-  user: "bdefinaxis@gmail.com",
-  pass: "riyd ubki qtwh vphu",
-},
-  connectionTimeout: 60000,
-  socketTimeout: 60000,
+  service: "gmail",
+  auth: {
+    user: config.attendance.email,
+    pass: config.attendance.pass,
+  },
 });
 
 // ─── OTP: Request ─────────────────────────────────────────────────────────────
