@@ -21,7 +21,7 @@ import noteRoutes from "./routes/note.routes.js";
 import taskRoutes from "./routes/task.routes.js";
 import attendanceRoutes from "./routes/attendance.routes.js";
 import eventRouter from "./routes/event.routes.js";
-import integrationRoutes from "./routes/integration.routes.js";
+import integrationRoutes from "./routes/Integration.routes.js";
 
 const app = express();
 
