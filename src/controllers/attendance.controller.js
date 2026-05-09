@@ -19,65 +19,17 @@ const timeStr = (d = new Date()) =>
 // { userId: { otp: "123456", expiresAt: timestamp } }
 const otpStore = new Map();
 
-const getAttendanceTransporter = () => {
-  const { email, pass } = config.attendance;
-  if (email && pass) {
-    const port = Number(process.env.ATTENDANCE_EMAIL_PORT || 587);
-    return {
-      transporter: nodemailer.createTransport({
-        host: "smtp.gmail.com",
-        port,
-        secure: port === 465,
-        requireTLS: port !== 465,
-        auth: { user: email, pass },
-        connectionTimeout: 20000,
-        greetingTimeout: 20000,
-        socketTimeout: 20000,
-      }),
-      debug: {
-        host: "smtp.gmail.com",
-        port,
-        user: email,
-        source: "ATTENDANCE_EMAIL",
-      },
-    };
-  }
-
-  const { host, port, user, pass: smtpPass } = config.smtp;
-  if (host && port && user && smtpPass) {
-    const numericPort = Number(port);
-    return {
-      transporter: nodemailer.createTransport({
-        host,
-        port: numericPort,
-        secure: numericPort === 465,
-        requireTLS: numericPort !== 465,
-        auth: { user, pass: smtpPass },
-        connectionTimeout: 20000,
-        greetingTimeout: 20000,
-        socketTimeout: 20000,
-      }),
-      debug: {
-        host,
-        port: numericPort,
-        user,
-        source: "SMTP_CONFIG",
-      },
-    };
-  }
-
-  throw new Error(
-    "Attendance email settings are not configured. Set ATTENDANCE_EMAIL/ATTENDANCE_EMAIL_PASS or SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS.",
-  );
-};
-
-const getAttendanceFromAddress = () => {
-  return config.attendance.email || config.smtp.from || config.smtp.user;
-};
+// ─── Nodemailer transporter ───────────────────────────────────────────────────
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: config.attendance.email,
+    pass: config.attendance.pass,
+  },
+});
 
 // ─── OTP: Request ─────────────────────────────────────────────────────────────
 export const requestAttendanceOtp = async (req, res) => {
-  let smtpDebug = null;
   try {
     const userId = req.user._id;
     const today = dateStr();
@@ -104,12 +56,9 @@ export const requestAttendanceOtp = async (req, res) => {
     });
 
     // Send email to admin
-    const { transporter, debug } = getAttendanceTransporter();
-    smtpDebug = debug;
-    const fromAddress = getAttendanceFromAddress();
     await transporter.sendMail({
-      from: `"Attendance System" <${fromAddress}>`,
-      to: fromAddress,
+      from: `"Attendance System" <${config.attendance.email}>`,
+      to: config.attendance.email,
       subject: `🕐 Attendance Approval Request — ${req.user.name || req.user.email} · ${today}`,
       html: `
 <!DOCTYPE html>
@@ -200,17 +149,8 @@ export const requestAttendanceOtp = async (req, res) => {
 
     res.json({ message: "OTP sent to admin email" });
   } catch (err) {
-    const timeoutMessage =
-      err?.code === "ETIMEDOUT"
-        ? "Failed to send OTP due to SMTP connection timeout."
-        : "Failed to send OTP due to email delivery error.";
-    console.error("requestAttendanceOtp: failed sending OTP", {
-      error: err,
-      smtpDebug,
-      smtp: err?.response || err?.command || err?.code,
-      details: err,
-    });
-    res.status(500).json({ message: timeoutMessage });
+    console.error("requestAttendanceOtp:", err);
+    res.status(500).json({ message: "Failed to send OTP. Please try again." });
   }
 };
 
