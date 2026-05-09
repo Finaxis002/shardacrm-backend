@@ -24,10 +24,10 @@ const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 465,
   secure: true,
-  auth: {
-    user: config.attendance.email,
-    pass: config.attendance.pass,
-  },
+auth: {
+  user: "bdefinaxis@gmail.com",
+  pass: "riyd ubki qtwh vphu",
+},
   connectionTimeout: 60000,
   socketTimeout: 60000,
 });
