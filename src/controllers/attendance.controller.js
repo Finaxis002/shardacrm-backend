@@ -20,36 +20,12 @@ const timeStr = (d = new Date()) =>
 const otpStore = new Map();
 
 // ─── Nodemailer transporter ───────────────────────────────────────────────────
-
-// ─── Nodemailer transporter with Debugging ───────────────────────────────────────────
 const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
+  service: "gmail",
   auth: {
     user: config.attendance.email,
     pass: config.attendance.pass,
   },
-  // Ye 2 lines add karein logs dekhne ke liye
-  debug: true,
-  logger: true,
-
-  connectionTimeout: 10000,
-  greetingTimeout: 10000,
-  socketTimeout: 15000,
-});
-
-// ✅ Immediate Verification check
-transporter.verify((error, success) => {
-  if (error) {
-    console.error("❌ SMTP Verification Error Details:", {
-      message: error.message,
-      code: error.code,
-      command: error.command,
-    });
-  } else {
-    console.log("✅ SMTP Server is ready to send emails");
-  }
 });
 
 // ─── OTP: Request ─────────────────────────────────────────────────────────────
