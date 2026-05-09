@@ -5,9 +5,16 @@ import {
   recordPayment,
   updatePayment,
   deletePayment,
-  generatePaymentLink,
   getPaymentStats,
 } from "../controllers/payment.controller.js";
+
+import {
+  createRazorpayOrder,
+  verifyRazorpayPayment,
+  handleRazorpayWebhook,
+  generateRazorpayPaymentLink,
+} from "../controllers/razorpay.controller.js";
+
 import { verifyJWT } from "../middleware/auth.middleware.js";
 import { checkPermission } from "../middleware/rbac.middleware.js";
 import { validateRequest } from "../middleware/validation.middleware.js";
@@ -20,17 +27,34 @@ import {
 
 const router = Router();
 
-// Apply auth middleware to all routes
+// ─── PUBLIC ROUTE (No JWT) ────────────────────────────────────────────────────
+// Razorpay calls this directly — NO auth middleware
+router.post("/razorpay/webhook", handleRazorpayWebhook);
+
+// ─── Apply JWT auth to all routes below ──────────────────────────────────────
 router.use(verifyJWT);
 
-// GET routes
+// ─── Razorpay routes ──────────────────────────────────────────────────────────
+router.post(
+  "/razorpay/create-order",
+  checkPermission("record_payments"),
+  createRazorpayOrder,
+);
+
+router.post(
+  "/razorpay/verify",
+  checkPermission("record_payments"),
+  verifyRazorpayPayment,
+);
+
+// ─── Existing GET routes ──────────────────────────────────────────────────────
 router.get("/", validateRequest(getPaymentsValidator, "query"), getPayments);
 
 router.get("/stats/overview", getPaymentStats);
 
 router.get("/:id", getPayment);
 
-// POST routes
+// ─── Existing POST routes ─────────────────────────────────────────────────────
 router.post(
   "/",
   checkPermission("record_payments"),
@@ -42,10 +66,10 @@ router.post(
   "/:id/generate-link",
   checkPermission("record_payments"),
   validateRequest(generatePaymentLinkValidator, "body"),
-  generatePaymentLink,
+  generateRazorpayPaymentLink, // ← replaced mock with real
 );
 
-// PUT routes
+// ─── Existing PUT routes ──────────────────────────────────────────────────────
 router.put(
   "/:id",
   checkPermission("record_payments"),
@@ -53,7 +77,7 @@ router.put(
   updatePayment,
 );
 
-// DELETE routes
+// ─── Existing DELETE routes ───────────────────────────────────────────────────
 router.delete("/:id", checkPermission("record_payments"), deletePayment);
 
 export default router;

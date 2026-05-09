@@ -85,7 +85,7 @@ export const recordPayment = asyncHandler(async (req, res) => {
     amount,
     currency = "INR",
     paymentMode,
-    status = "Completed",
+    status = "Paid",
     reference,
     paymentDate,
     dueDate,

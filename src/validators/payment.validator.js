@@ -16,12 +16,12 @@ export const createPaymentValidator = Joi.object({
     )
     .required(),
   status: Joi.string()
-    .valid("Pending", "Completed", "Partial", "Overdue", "Failed")
+    .valid("Pending", "Completed", "Partial", "Overdue", "Failed", "Paid", "Cancelled")
     .optional(),
-  reference: Joi.string().optional(),
+  reference: Joi.string().optional().allow(""),
   paymentDate: Joi.date().optional(),
   dueDate: Joi.date().optional(),
-  description: Joi.string().optional(),
+  description: Joi.string().optional().allow(""),
 });
 
 export const updatePaymentValidator = Joi.object({
@@ -41,18 +41,18 @@ export const updatePaymentValidator = Joi.object({
     "Partial",
     "Overdue",
     "Failed",
+    "Paid",
+    "Cancelled",
   ),
-  reference: Joi.string(),
+  reference: Joi.string().allow(""),
   paymentDate: Joi.date(),
   dueDate: Joi.date(),
-  description: Joi.string(),
+  description: Joi.string().allow(""),
 });
 
+// generate-link 
 export const generatePaymentLinkValidator = Joi.object({
-  leadId: Joi.string().required(),
-  amount: Joi.number().required().min(0),
-  currency: Joi.string().optional().default("INR"),
-  description: Joi.string().optional(),
+  description: Joi.string().optional().allow(""),
 });
 
 export const getPaymentsValidator = Joi.object({

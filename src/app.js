@@ -21,6 +21,8 @@ import noteRoutes from "./routes/note.routes.js";
 import taskRoutes from "./routes/task.routes.js";
 import attendanceRoutes from "./routes/attendance.routes.js";
 import eventRouter from "./routes/event.routes.js";
+import integrationRoutes from "./routes/integration.routes.js";
+
 const app = express();
 
 // Security middleware
@@ -34,7 +36,17 @@ app.options("*", cors(corsOptions));
 // Cookie parser
 app.use(cookieParser());
 
-// Body parser
+// ─── Razorpay Webhook (express.json) ───────────────
+app.use(
+  "/api/v1/payments/razorpay/webhook",
+  express.raw({ type: "application/json" }),
+  (req, res, next) => {
+    req.rawBody = req.body.toString();
+    next();
+  }
+);
+
+// Body parser (webhook ke BAAD)
 app.use(express.json({ limit: "16kb" }));
 app.use(express.urlencoded({ limit: "16kb", extended: true }));
 
@@ -60,6 +72,8 @@ app.use("/api/v1/tasks", taskRoutes);
 app.use("/api/v1/attendance", attendanceRoutes);
 app.use("/api/v1/google-sheets", googleSheetsRoutes);
 app.use("/api/v1/events", eventRouter);
+app.use("/api/v1/integrations", integrationRoutes);
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
