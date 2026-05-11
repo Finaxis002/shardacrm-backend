@@ -7,11 +7,33 @@ import asyncHandler from "../utils/asyncHandler.js";
 export const getDashboardOverview = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
   const userId = req.user._id;
+  const role = req.user.role;
 
+  // Admin/manager/master sees all leads; others see only assigned
+  const isPrivileged = ["admin", "manager", "master"].includes(role);
+const statsFilter = isPrivileged
+  ? { organization }
+  : {
+      organization,
+      $or: [{ assignedTo: userId }, { coAssignees: userId }],
+    };
+
+const listFilter = {
+  organization,
+  $or: [{ assignedTo: userId }, { coAssignees: userId }],
+};
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
+
+  // Build base filter
+  const baseLeadFilter = isPrivileged
+    ? { organization }
+    : {
+        organization,
+        $or: [{ assignedTo: userId }, { coAssignees: userId }],
+      };
 
   const [
     totalLeads,
@@ -21,74 +43,66 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
     pipelineValueResult,
     collectedResult,
   ] = await Promise.all([
-    Lead.countDocuments({ organization }),
-    Lead.countDocuments({ organization, isActive: true }),
-    Lead.countDocuments({ organization, status: "Success" }),
+   Lead.countDocuments(statsFilter),
+  Lead.countDocuments({ ...statsFilter, isActive: true }),
+  Lead.countDocuments({ ...statsFilter, status: "Success" }), 
     Lead.countDocuments({
-      organization,
+      ...baseLeadFilter,
       status: { $nin: ["Success", "Closed"] },
     }),
     Lead.aggregate([
-      {
-        $match: {
-          organization,
-          status: { $nin: ["Success", "Closed"] },
-        },
+    {
+      $match: {
+        ...statsFilter,
+        status: { $nin: ["Success", "Closed"] },
       },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: "$dealValue" },
-        },
-      },
-    ]),
+    },
+    { $group: { _id: null, total: { $sum: "$dealValue" } } },
+  ]),
     Payment.aggregate([
       {
         $match: {
-          organization,
-          status: { $in: ["Paid", "Partial", "Overdue"] },
+          organization
         },
       },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: "$amount" },
-        },
-      },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
     ]),
   ]);
 
   const pipelineValue = pipelineValueResult[0]?.total || 0;
   const collectedAmount = collectedResult[0]?.total || 0;
-const leadFilter = {
-  organization,
-  $or: [
-    { assignedTo: userId },
-    { coAssignees: userId },
-  ],
-};
+
   const [recentLeads, todayReminders, teamPerformance] = await Promise.all([
-    Lead.find(leadFilter)
-  .sort({ createdAt: -1 })
-  .limit(5)
-  .populate("assignedTo", "name")
-  .lean(),
-   Reminder.find({
-  organization,
-  isDone: false,
-  reminderDate: { $gte: today, $lt: tomorrow },
- $or: [{ assignedTo: userId }, { notifyUsers: userId }], 
-})
+   Lead.find({
+      organization,
+      $or: [{ assignedTo: userId }, { coAssignees: userId }],
+    })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .populate("assignedTo", "name")
+      .lean(),
+
+    Reminder.find({
+      organization,
+      isDone: false,
+      reminderDate: { $gte: today, $lt: tomorrow },
+      $or: [{ assignedTo: userId }, { notifyUsers: userId }],
+    })
       .populate("leadId", "name phone")
       .sort({ reminderTime: 1 })
       .lean(),
+
     Lead.aggregate([
-      { $match: { organization } },
+     { 
+    $match: isPrivileged 
+      ? { organization } 
+      : { organization }
+  },
       {
         $group: {
           _id: "$assignedTo",
           leadCount: { $sum: 1 },
-          totalDealValue: { $sum: "$dealValue" },
+         totalDealValue: { $sum: { $ifNull: ["$dealValue", 0] } },
         },
       },
       {
@@ -99,12 +113,7 @@ const leadFilter = {
           as: "user",
         },
       },
-      {
-        $unwind: {
-          path: "$user",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
+      { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
       {
         $project: {
           userId: "$_id",
