@@ -4,62 +4,96 @@ import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import logger from "../utils/logger.js";
 import mongoose from "mongoose";
+import Attendance from "../models/Attendance.model.js";
 
-/**
- * Get next assignee based on rule
- * Called internally from sheet sync
- */
+const getISTHour = () => {
+  return parseInt(
+    new Date().toLocaleString("en-IN", {
+      hour: "numeric",
+      hour12: false,
+      timeZone: "Asia/Kolkata",
+    }),
+    10
+  );
+};
+ 
+// ─── Helper: Today's present user IDs ────────────────────────────────────────
+const getTodayPresentUserIds = async () => {
+  const today = new Date().toLocaleDateString("en-CA", {
+    timeZone: "Asia/Kolkata",
+  });
+ 
+  const records = await Attendance.find({ date: today, status: "present" })
+    .select("userId")
+    .lean();
+ 
+  return new Set(records.map((r) => r.userId.toString()));
+};
+ 
+// ─── Main ─────────────────────────────────────────────────────────────────────
 export const getNextAssignee = async (rule) => {
   console.log(`\n--- 🎯 Distribution Logic Started ---`);
-  
-  if (!rule) {
-    return null;
+ 
+  if (!rule) return null;
+  if (!rule.userPool || rule.userPool.length === 0) return null;
+  if (rule.rule === "manual") return null;
+ 
+  const fullPool = rule.userPool.map((u) => u.toString());
+ 
+  // ── 10 AM ke baad attendance filter lagao ────────────────────────────────
+  const istHour = getISTHour();
+  let activePool = fullPool; // default: sabko use karo
+ 
+  if (istHour >= 10) {
+    const presentIds = await getTodayPresentUserIds();
+    // Pool mein se sirf present users
+    const presentPool = fullPool.filter((id) => presentIds.has(id));
+ 
+    console.log(
+      `🕙 IST=${istHour}h | Pool: ${fullPool.length} total, ${presentPool.length} present`
+    );
+ 
+    if (presentPool.length > 0) {
+      activePool = presentPool; // sirf present wale
+    } else {
+      // Koi present nahi → full pool use karo (default behaviour same rahega)
+      console.log("⚠️  No present users found — falling back to full pool");
+      activePool = fullPool;
+    }
+  } else {
+    console.log(`🕙 IST=${istHour}h — Before 10 AM, no attendance check`);
   }
-
-  if (!rule.userPool || rule.userPool.length === 0) {
-    return null;
-  }
-
-  // console.log(`📝 Rule: ${rule.name} | Mode: ${rule.rule}`);
-  // console.log(`👥 Pool Members:`, rule.userPool);
-
-  if (rule.rule === "manual") {
-    // console.log("ℹ️ Manual mode: Skipping auto-assignment");
-    return null;
-  }
-
+ 
+  // ── Round Robin ───────────────────────────────────────────────────────────
   if (rule.rule === "round_robin") {
-    // Atomic update to prevent race conditions
     const updatedRule = await DistributionRule.findByIdAndUpdate(
       rule._id,
       { $inc: { rrIndex: 1 } },
       { new: true, select: "rrIndex userPool name" }
     );
-
-    const pool = updatedRule.userPool;
-    const index = (updatedRule.rrIndex - 1) % pool.length;
-    const assignee = pool[index];
-
-    // console.log(`✅ RR Step: Total Leads=${updatedRule.rrIndex} | Index=${index} | Assignee=${assignee}`);
-    // console.log(`--- ✅ Distribution Complete ---\n`);
+ 
+    const index = (updatedRule.rrIndex - 1) % activePool.length;
+    const assignee = activePool[index];
+ 
+    console.log(
+      `✅ RR: rrIndex=${updatedRule.rrIndex} | activePool=${activePool.length} | Assignee=${assignee}`
+    );
     return assignee;
   }
-
+ 
+  // ── Equal Load ────────────────────────────────────────────────────────────
   if (rule.rule === "equal_load") {
     const freshRule = await DistributionRule.findById(rule._id).lean();
     if (!freshRule) return null;
-
-    const pool = freshRule.userPool.map((id) => id.toString());
+ 
     let minCount = Infinity;
-    let selectedUser = pool[0];
-
-    // console.log("📊 Current Load Counts:", freshRule.leadCounts);
-
-    for (const userId of pool) {
-      // Check if Map or Object
-      const count = (freshRule.leadCounts instanceof Map 
-        ? freshRule.leadCounts.get(userId) 
-        : freshRule.leadCounts[userId]) || 0;
+    let selectedUser = activePool[0];
+ 
+    for (const userId of activePool) {
+      const count =
+        (freshRule.leadCounts instanceof Map
+          ? freshRule.leadCounts.get(userId)
+          : freshRule.leadCounts[userId]) || 0;
 
       if (count < minCount) {
         minCount = count;
@@ -72,8 +106,7 @@ export const getNextAssignee = async (rule) => {
       { $inc: { [`leadCounts.${selectedUser}`]: 1 } }
     );
 
-    // console.log(`✅ Equal Load: Selected User ${selectedUser} with Min Count ${minCount}`);
-    // console.log(`--- ✅ Distribution Complete ---\n`);
+    console.log(`✅ Equal Load: Selected=${selectedUser} | minCount=${minCount}`);
     return selectedUser;
   }
 
