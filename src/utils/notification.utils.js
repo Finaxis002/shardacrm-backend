@@ -1,4 +1,7 @@
+import webPush from "web-push";
+import PushSubscription from "../models/PushSubscription.model.js";
 import Notification from "../models/Notification.model.js";
+import { config } from "../config/env.js";
 
 const extractId = (value) => {
   if (!value) return "";
@@ -34,6 +37,66 @@ const normalizeRecipientIds = (
   );
 };
 
+const vapidConfigured = Boolean(
+  config.vapid?.publicKey && config.vapid?.privateKey,
+);
+
+if (vapidConfigured) {
+  webPush.setVapidDetails(
+    config.vapid.contact || "mailto:bdefinaxis@gmail.com",
+    config.vapid.publicKey,
+    config.vapid.privateKey,
+  );
+}
+
+const triggerPushNotification = async (
+  recipientIds,
+  title,
+  message,
+  actionUrl,
+) => {
+  if (
+    !Array.isArray(recipientIds) ||
+    !recipientIds.length ||
+    !vapidConfigured
+  ) {
+    return;
+  }
+
+  const subscriptions = await PushSubscription.find({
+    user: { $in: recipientIds },
+  }).lean();
+
+  if (!subscriptions.length) {
+    return;
+  }
+
+  const payload = JSON.stringify({
+    title,
+    body: message,
+    url: actionUrl || "/",
+  });
+
+  await Promise.all(
+    subscriptions.map(async (subscription) => {
+      try {
+        await webPush.sendNotification(subscription, payload);
+      } catch (error) {
+        const statusCode = error?.statusCode;
+        if (statusCode === 404 || statusCode === 410) {
+          await PushSubscription.deleteOne({ _id: subscription._id });
+          return;
+        }
+        console.error(
+          "Push notification delivery failed for subscription",
+          subscription.endpoint,
+          error,
+        );
+      }
+    }),
+  );
+};
+
 export const createNotification = async ({
   recipientId,
   senderId,
@@ -59,7 +122,20 @@ export const createNotification = async ({
     actionUrl,
   });
 
-  return notification.save();
+  const savedNotification = await notification.save();
+
+  if (vapidConfigured) {
+    triggerPushNotification(
+      [String(recipientId)],
+      title,
+      message,
+      actionUrl,
+    ).catch((error) => {
+      console.error("Failed to send push notification:", error);
+    });
+  }
+
+  return savedNotification;
 };
 
 export const createNotifications = async ({
@@ -95,5 +171,14 @@ export const createNotifications = async ({
   }));
 
   const docs = await Notification.insertMany(notifications);
+
+  if (vapidConfigured) {
+    triggerPushNotification(normalizedIds, title, message, actionUrl).catch(
+      (error) => {
+        console.error("Failed to send push notifications:", error);
+      },
+    );
+  }
+
   return docs;
 };

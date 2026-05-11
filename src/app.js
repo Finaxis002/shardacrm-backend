@@ -12,6 +12,7 @@ import paymentRoutes from "./routes/payment.routes.js";
 import reminderRoutes from "./routes/reminder.routes.js";
 import userRoutes from "./routes/user.routes.js";
 import notificationRoutes from "./routes/notification.routes.js";
+import pushRoutes from "./routes/push.routes.js";
 import settingsRoutes from "./routes/settings.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
 import gcalRouter from "./routes/googleCalendar.routes.js";
@@ -43,7 +44,7 @@ app.use(
   (req, res, next) => {
     req.rawBody = req.body.toString();
     next();
-  }
+  },
 );
 
 // Body parser (webhook ke BAAD)
@@ -63,6 +64,7 @@ app.use("/api/v1/payments", paymentRoutes);
 app.use("/api/v1/reminders", reminderRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
+app.use("/api/v1/push", pushRoutes);
 app.use("/api/v1/settings", settingsRoutes);
 app.use("/api/v1/dashboard", dashboardRoutes);
 app.use("/api/v1/gcal", gcalRouter);
