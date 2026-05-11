@@ -2,21 +2,87 @@ import Razorpay from "razorpay";
 import crypto from "crypto";
 import Payment from "../models/Payment.model.js";
 import Lead from "../models/Lead.model.js";
+import Organization from "../models/Organization.model.js";
 import ApiError from "../utils/apiError.js";
 import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import logger from "../utils/logger.js";
 
-// ─── Razorpay instance ────────────────────────────────────────────────────────
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
 /**
- * Create Razorpay Order
- * @route POST /api/v1/payments/razorpay/create-order
- * @access Private
+ * GET /api/v1/integrations/razorpay/status
+ */
+export const getRazorpayStatus = asyncHandler(async (req, res) => {
+  const organization = req.user.organization;
+  const keysConfigured =
+    !!process.env.RAZORPAY_KEY_ID && !!process.env.RAZORPAY_KEY_SECRET;
+
+  if (!keysConfigured) {
+    return res
+      .status(200)
+      .json(new ApiResponse(200, { connected: false }, "Razorpay keys not configured"));
+  }
+
+  const org = await Organization.findById(organization).lean();
+  const connected = org?.integrations?.razorpayEnabled !== false;
+
+  res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        { connected },
+        connected ? "Razorpay is connected" : "Razorpay is disconnected",
+      ),
+    );
+});
+
+/**
+ * POST /api/v1/integrations/razorpay/connect
+ */
+export const connectRazorpay = asyncHandler(async (req, res) => {
+  const organization = req.user.organization;
+  const keysConfigured =
+    !!process.env.RAZORPAY_KEY_ID && !!process.env.RAZORPAY_KEY_SECRET;
+
+  if (!keysConfigured) {
+    throw new ApiError(400, "Razorpay API keys are not configured on the server");
+  }
+
+  await Organization.findByIdAndUpdate(organization, {
+    $set: { "integrations.razorpayEnabled": true },
+  });
+
+  logger.info(`Razorpay connected for org: ${organization}`);
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { connected: true }, "Razorpay connected successfully"));
+});
+
+/**
+ * POST /api/v1/integrations/razorpay/disconnect
+ */
+export const disconnectRazorpay = asyncHandler(async (req, res) => {
+  const organization = req.user.organization;
+
+  await Organization.findByIdAndUpdate(organization, {
+    $set: { "integrations.razorpayEnabled": false },
+  });
+
+  logger.info(`Razorpay disconnected for org: ${organization}`);
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { connected: false }, "Razorpay disconnected successfully"));
+});
+
+/**
+ * POST /api/v1/payments/razorpay/create-order
  */
 export const createRazorpayOrder = asyncHandler(async (req, res) => {
   const { leadId, amount, currency = "INR", description, dueDate } = req.body;
@@ -24,16 +90,12 @@ export const createRazorpayOrder = asyncHandler(async (req, res) => {
   const recordedBy = req.user._id;
 
   if (!leadId || !amount || amount <= 0) {
-    throw new ApiError(400, "leadId and valid amount are required");
+    throw new ApiError(400, "leadId and a valid amount are required");
   }
 
-  // Validate lead
   const lead = await Lead.findOne({ _id: leadId, organization });
-  if (!lead) {
-    throw new ApiError(404, "Lead not found");
-  }
+  if (!lead) throw new ApiError(404, "Lead not found");
 
-  // Create Razorpay order (amount in paise)
   const razorpayOrder = await razorpay.orders.create({
     amount: Math.round(amount * 100),
     currency,
@@ -45,7 +107,6 @@ export const createRazorpayOrder = asyncHandler(async (req, res) => {
     },
   });
 
-  // Save pending payment in DB
   const payment = new Payment({
     leadId,
     amount,
@@ -69,39 +130,22 @@ export const createRazorpayOrder = asyncHandler(async (req, res) => {
   res.status(201).json(
     new ApiResponse(
       201,
-      {
-        payment,
-        razorpayOrder,
-        razorpayKeyId: process.env.RAZORPAY_KEY_ID,
-      },
+      { payment, razorpayOrder, razorpayKeyId: process.env.RAZORPAY_KEY_ID },
       "Razorpay order created successfully",
     ),
   );
 });
 
 /**
- * Verify Razorpay Payment
- * @route POST /api/v1/payments/razorpay/verify
- * @access Private
+ * POST /api/v1/payments/razorpay/verify
  */
 export const verifyRazorpayPayment = asyncHandler(async (req, res) => {
-  const {
-    razorpay_order_id,
-    razorpay_payment_id,
-    razorpay_signature,
-    paymentId,
-  } = req.body;
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, paymentId } = req.body;
 
-  if (
-    !razorpay_order_id ||
-    !razorpay_payment_id ||
-    !razorpay_signature ||
-    !paymentId
-  ) {
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !paymentId) {
     throw new ApiError(400, "All Razorpay fields are required");
   }
 
-  // Verify signature
   const generatedSignature = crypto
     .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
     .update(`${razorpay_order_id}|${razorpay_payment_id}`)
@@ -111,11 +155,8 @@ export const verifyRazorpayPayment = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Invalid payment signature");
   }
 
-  // Update payment in DB
   const payment = await Payment.findById(paymentId);
-  if (!payment) {
-    throw new ApiError(404, "Payment record not found");
-  }
+  if (!payment) throw new ApiError(404, "Payment record not found");
 
   payment.status = "Paid";
   payment.gatewayTransactionId = razorpay_payment_id;
@@ -134,22 +175,17 @@ export const verifyRazorpayPayment = asyncHandler(async (req, res) => {
 
   logger.info(`Razorpay payment verified: ${razorpay_payment_id}`);
 
-  res
-    .status(200)
-    .json(new ApiResponse(200, payment, "Payment verified successfully"));
+  res.status(200).json(new ApiResponse(200, payment, "Payment verified successfully"));
 });
 
 /**
- * Razorpay Webhook Handler
- * @route POST /api/v1/payments/razorpay/webhook
- * @access Public (No JWT - Razorpay calls this)
+ * POST /api/v1/payments/razorpay/webhook  (PUBLIC — no JWT)
  */
 export const handleRazorpayWebhook = asyncHandler(async (req, res) => {
   const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
   const signature = req.headers["x-razorpay-signature"];
-
-  // Verify webhook signature using raw body
   const rawBody = req.rawBody || JSON.stringify(req.body);
+
   const expectedSignature = crypto
     .createHmac("sha256", webhookSecret)
     .update(rawBody)
@@ -168,21 +204,14 @@ export const handleRazorpayWebhook = asyncHandler(async (req, res) => {
   if (event === "payment.captured") {
     const razorpayPayment = payload.payment?.entity;
     const orderId = razorpayPayment?.order_id;
-
     if (orderId) {
-      const payment = await Payment.findOne({
-        "metadata.razorpayOrderId": orderId,
-      });
-
+      const payment = await Payment.findOne({ "metadata.razorpayOrderId": orderId });
       if (payment && payment.status !== "Paid") {
         payment.status = "Paid";
         payment.gatewayTransactionId = razorpayPayment.id;
         payment.paymentDate = new Date(razorpayPayment.created_at * 1000);
         payment.reference = razorpayPayment.id;
-        payment.metadata = {
-          ...payment.metadata,
-          webhookData: razorpayPayment,
-        };
+        payment.metadata = { ...payment.metadata, webhookData: razorpayPayment };
         await payment.save();
         logger.info(`Payment updated via webhook: ${payment._id}`);
       }
@@ -192,12 +221,8 @@ export const handleRazorpayWebhook = asyncHandler(async (req, res) => {
   if (event === "payment.failed") {
     const razorpayPayment = payload.payment?.entity;
     const orderId = razorpayPayment?.order_id;
-
     if (orderId) {
-      const payment = await Payment.findOne({
-        "metadata.razorpayOrderId": orderId,
-      });
-
+      const payment = await Payment.findOne({ "metadata.razorpayOrderId": orderId });
       if (payment && payment.status === "Pending") {
         payment.status = "Cancelled";
         payment.metadata = {
@@ -210,14 +235,11 @@ export const handleRazorpayWebhook = asyncHandler(async (req, res) => {
     }
   }
 
-  // Always return 200 to Razorpay quickly
   res.status(200).json({ received: true });
 });
 
 /**
- * Generate Razorpay Payment Link (REAL)
- * @route POST /api/v1/payments/:id/generate-link
- * @access Private
+ * POST /api/v1/payments/:id/generate-link
  */
 export const generateRazorpayPaymentLink = asyncHandler(async (req, res) => {
   const { id } = req.params;
@@ -228,16 +250,12 @@ export const generateRazorpayPaymentLink = asyncHandler(async (req, res) => {
     "leadId",
     "name phone email",
   );
-
-  if (!payment) {
-    throw new ApiError(404, "Payment not found");
-  }
+  if (!payment) throw new ApiError(404, "Payment not found");
 
   const lead = payment.leadId;
 
-  // Create real Razorpay Payment Link
   const paymentLink = await razorpay.paymentLink.create({
-    amount: Math.round(payment.amount * 100), // paise mein
+    amount: Math.round(payment.amount * 100),
     currency: payment.currency || "INR",
     accept_partial: false,
     description: description || payment.description || "Payment",
@@ -246,26 +264,19 @@ export const generateRazorpayPaymentLink = asyncHandler(async (req, res) => {
       email: lead?.email || "",
       contact: lead?.phone || "",
     },
-    notify: {
-      sms: !!lead?.phone,
-      email: !!lead?.email,
-    },
+    notify: { sms: !!lead?.phone, email: !!lead?.email },
     reminder_enable: true,
     notes: {
       paymentId: payment._id.toString(),
       leadId: lead?._id?.toString() || "",
     },
-    expire_by: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days
+    expire_by: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
   });
 
-  // Save link details in DB
   payment.paymentLinkId = paymentLink.id;
   payment.paymentLinkUrl = paymentLink.short_url;
   payment.paymentLinkExpiry = new Date(paymentLink.expire_by * 1000);
-  payment.metadata = {
-    ...payment.metadata,
-    paymentLinkId: paymentLink.id,
-  };
+  payment.metadata = { ...payment.metadata, paymentLinkId: paymentLink.id };
   await payment.save();
 
   logger.info(`Razorpay payment link generated: ${paymentLink.short_url}`);
@@ -281,24 +292,4 @@ export const generateRazorpayPaymentLink = asyncHandler(async (req, res) => {
       "Payment link generated successfully",
     ),
   );
-});
-
-/**
- * Razorpay Connection Status
- * @route GET /api/v1/integrations/razorpay/status
- * @access Private
- */
-export const getRazorpayStatus = asyncHandler(async (req, res) => {
-  const connected =
-    !!process.env.RAZORPAY_KEY_ID && !!process.env.RAZORPAY_KEY_SECRET;
-
-  res
-    .status(200)
-    .json(
-      new ApiResponse(
-        200,
-        { connected },
-        connected ? "Razorpay is connected" : "Razorpay is not configured",
-      ),
-    );
 });

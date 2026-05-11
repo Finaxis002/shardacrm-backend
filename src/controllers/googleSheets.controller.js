@@ -161,32 +161,56 @@ const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organizatio
     }
   }
 
-  let imported = 0;
+let imported = 0;
   let skipped = 0;
   const processedPhones = new Set();
+  const processedEmails = new Set();
   for (const row of rows) {
     const leadData = rowToLead(row, fieldMappings, fixedValues);
 
     // Phone clean - sirf last 10 digits lo
     if (leadData.phone) {
       leadData.phone = String(leadData.phone)
-        .replace(/\D/g, "") // p:, +, spaces sab hatao
-        .slice(-10); // right se sirf 10 digits
+        .replace(/\D/g, "")
+        .slice(-10);
     }
 
     if (!leadData.name?.trim() || !leadData.phone?.trim()) {
-      console.log(
-        "Skipped - missing name/phone:",
-        leadData.name,
-        leadData.phone,
-      );
       skipped++;
       continue;
     }
 
     const phoneClean = String(leadData.phone).trim();
 
-    // Assignee decide karo - distribution rule se ya default
+    // Step 1: Within-batch duplicate check
+   // Step 1: Within-batch duplicate check
+  // Step 1: Within-batch duplicate check (phone ya email)
+    const emailRawCheck = String(leadData.email || "").trim().toLowerCase();
+    const emailRegex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
+    const validEmailCheck = emailRawCheck && emailRegex.test(emailRawCheck) ? emailRawCheck : null;
+
+ // Step 1: Within-batch duplicate check
+    const isWithinBatchDup = processedPhones.has(phoneClean) || 
+      (validEmailCheck && processedEmails.has(validEmailCheck));
+    
+    if (!isWithinBatchDup) {
+      processedPhones.add(phoneClean);
+      if (validEmailCheck) processedEmails.add(validEmailCheck);
+    }
+
+
+// Step 2: DB duplicate check (phone ya email)
+    let isRepeat = isWithinBatchDup;
+    if (!isRepeat) {
+      const dbQuery = { organization, $or: [{ phone: phoneClean }] };
+      if (validEmailCheck) dbQuery.$or.push({ email: validEmailCheck });
+      const existing = await Lead.findOne(dbQuery);
+      isRepeat = !!existing;
+    }
+
+    
+
+    // Step 3: Assignee decide karo (sirf naye lead ke liye)
     let finalAssignee = assignedTo || createdBy;
     let assignmentSource = "default";
     let assignedRule = null;
@@ -200,51 +224,9 @@ const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organizatio
       }
     }
 
-    console.log(`Sheet sync ${syncId} → lead=${leadData.name || "<no-name>"} phone=${phoneClean} assignedTo=${String(finalAssignee)} source=${assignmentSource}` +
-      (assignedRule ? ` rule=${assignedRule}` : "") +
-      (activeRuleInfo ? ` ruleId=${activeRuleInfo.ruleId}` : ""));
-
-if (processedPhones.has(phoneClean)) {
-  skipped++;
-  continue;
-}
-processedPhones.add(phoneClean);
-
-const existing = await Lead.findOne({ phone: phoneClean, organization });
-console.log("Phone check:", phoneClean, "| Existing found:", !!existing);
-const emailRaw = String(leadData.email || "").trim().toLowerCase();
-const emailRegex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
-const validEmail = emailRaw && emailRegex.test(emailRaw) ? emailRaw : undefined;
-
-const sourceRaw = String(leadData.source || "").trim();
-
-if (existing) {
-  // Naya lead banao Repeat status ke saath
-  const repeatLead = new Lead({
-    name:        String(leadData.name).trim(),
-    phone:       phoneClean,
-    email:       validEmail,
-    city:        leadData.city || "",
-    source:      VALID_SOURCES.includes(sourceRaw) ? sourceRaw : "Google Sheet",
-    status:      "Repeat",
-    dealValue:   Number(leadData.dealValue) || 0,
-    product:     leadData.product || "",
-    priority:    normalizePriority(leadData.priority),
-    closeDate:   parseDate(leadData.closeDate),
-    assignedTo:  finalAssignee,
-    organization,
-    createdBy,
-    isDuplicate: true,
-     sheetName:   sheetName || "",
-  });
-
-  await repeatLead.save();
-
-    
-
-  imported++;
-  continue;
-}
+    const emailRaw = validEmailCheck || "";
+    const validEmail = validEmailCheck || undefined;
+    const sourceRaw = String(leadData.source || "").trim();
 
 const lead = new Lead({
   name:       String(leadData.name).trim(),
@@ -253,6 +235,7 @@ const lead = new Lead({
   city:       leadData.city || "",
   source:     VALID_SOURCES.includes(sourceRaw) ? sourceRaw : "Google Sheet",
  status:     "New",
+  status:     isRepeat ? "Repeat" : "New",
   dealValue:  Number(leadData.dealValue) || 0,
   product:    leadData.product || "",
   priority:   normalizePriority(leadData.priority),
@@ -260,7 +243,7 @@ const lead = new Lead({
   assignedTo: finalAssignee,
   organization,
   createdBy,
-  isDuplicate: false,
+  isDuplicate: isRepeat,
   sheetName:  sheetName || "",   
 });
 
@@ -417,9 +400,9 @@ export const saveMapping = asyncHandler(async (req, res) => {
   if (!mapped.includes("phone"))
     throw new ApiError(400, "Phone column must be mapped");
 
-  sync.fieldMappings = fieldMappings;
+sync.fieldMappings = fieldMappings;
   sync.fixedValues = fixedValues;
-  sync.isActive = true;
+  sync.isActive = false;
   await sync.save();
 
   // Respond immediately, run first import in background
@@ -470,6 +453,7 @@ const runFirstImport = async ({ sync, organization, createdBy }) => {
     sync.lastSyncedAt = new Date();
     sync.totalImported += imported;
     sync.lastError = null;
+    sync.isActive = true;
     await sync.save();
 
     logger.info(
@@ -477,6 +461,7 @@ const runFirstImport = async ({ sync, organization, createdBy }) => {
     );
   } catch (err) {
     sync.lastError = err.message;
+    sync.isActive = true;
     await sync.save();
     logger.error(`First import error ${sync._id}: ${err.message}`);
   }
@@ -583,7 +568,7 @@ export const syncNewRows = async (sync) => {
         sheetName,
     });
 
-    sync.lastRowSynced += rows.length - skipped;
+    sync.lastRowSynced += rows.length;
     sync.lastSyncedAt = new Date();
     sync.totalImported += imported;
     sync.lastError = null;
