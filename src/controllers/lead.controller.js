@@ -29,12 +29,8 @@ export const getLeads = asyncHandler(async (req, res) => {
   // Build filter
   const filter = { organization };
   if (status) {
-    if (status === "New") {
-      filter.status = { $in: ["New", "Repeat"] };
-    } else {
       filter.status = status;
     }
-  }
   if (source) filter.source = source;
 
   let accessFilter = null;
