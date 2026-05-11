@@ -39,6 +39,7 @@
     "razorpay": "^2.9.6",
     "redis": "^4.6.11",
     "socket.io": "^4.7.2",
+    "web-push": "^3.6.7",
     "winston": "^3.11.0"
   },
   "devDependencies": {

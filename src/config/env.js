@@ -60,6 +60,12 @@ export const config = {
     merchantSalt: process.env.PAYU_MERCHANT_SALT,
   },
 
+  vapid: {
+    publicKey: process.env.VAPID_PUBLIC_KEY,
+    privateKey: process.env.VAPID_PRIVATE_KEY,
+    contact: process.env.VAPID_CONTACT || "mailto:bdefinaxis@gmail.com",
+  },
+
   // Redis
   redisUrl: process.env.REDIS_URL || "redis://localhost:6379",
 
