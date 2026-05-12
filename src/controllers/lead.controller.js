@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Lead from "../models/Lead.model.js";
 import User from "../models/User.model.js";
 import Activity from "../models/Activity.model.js";
@@ -29,8 +30,16 @@ export const getLeads = asyncHandler(async (req, res) => {
   // Build filter
   const filter = { organization };
   if (status) {
-      filter.status = status;
+    const statuses = String(status)
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (statuses.length === 1) {
+      filter.status = statuses[0];
+    } else if (statuses.length > 1) {
+      filter.status = { $in: statuses };
     }
+  }
   if (source) filter.source = source;
 
   let accessFilter = null;
@@ -81,18 +90,47 @@ export const getLeads = asyncHandler(async (req, res) => {
     .lean();
 
   const total = await Lead.countDocuments(filter);
+  const aggregationFilter = { ...filter };
+  if (
+    aggregationFilter.assignedTo &&
+    mongoose.isValidObjectId(aggregationFilter.assignedTo)
+  ) {
+    aggregationFilter.assignedTo = new mongoose.Types.ObjectId(
+      aggregationFilter.assignedTo,
+    );
+  }
+  const totalValueAgg = await Lead.aggregate([
+    { $match: aggregationFilter },
+    {
+      $group: {
+        _id: null,
+        totalValue: {
+          $sum: {
+            $convert: {
+              input: { $ifNull: ["$dealValue", "$value", 0] },
+              to: "double",
+              onError: 0,
+              onNull: 0,
+            },
+          },
+        },
+      },
+    },
+  ]);
+  const totalValue = totalValueAgg[0]?.totalValue || 0;
 
   logger.info(`Fetched ${leads.length} leads for user ${userId}`);
 
-  res
-    .status(200)
-    .json(
-      new ApiResponse(
-        200,
-        formatPaginatedResponse(leads, total, pageNum, pageLimit),
-        "Leads fetched successfully",
-      ),
-    );
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        ...formatPaginatedResponse(leads, total, pageNum, pageLimit),
+        totalValue,
+      },
+      "Leads fetched successfully",
+    ),
+  );
 });
 
 /**
