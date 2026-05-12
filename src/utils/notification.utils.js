@@ -22,9 +22,7 @@ const normalizeRecipientIds = (
   excludeSender = true,
 ) => {
   if (!recipientIds) return [];
-
   const ids = Array.isArray(recipientIds) ? recipientIds : [recipientIds];
-
   return Array.from(
     new Set(
       ids
@@ -72,9 +70,12 @@ const triggerPushNotification = async (
   }
 
   const payload = JSON.stringify({
-    title,
-    body: message,
+    title: "Sharda CRM",
+    body: `${title}\n${message}`,
     url: actionUrl || "/",
+    icon: "/sharda_crm_logo.png",
+    badge: "/sharda_crm_logo.png",
+    vibrate: [500, 110, 500, 110, 450, 110, 200],
   });
 
   await Promise.all(
