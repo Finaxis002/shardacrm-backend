@@ -23,7 +23,7 @@ import taskRoutes from "./routes/task.routes.js";
 import attendanceRoutes from "./routes/attendance.routes.js";
 import eventRouter from "./routes/event.routes.js";
 import integrationRoutes from "./routes/Integration.routes.js";
-
+import logoutOtpRoutes from "./routes/Logoutotp.route.js";
 const app = express();
 
 // Security middleware
@@ -75,7 +75,7 @@ app.use("/api/v1/attendance", attendanceRoutes);
 app.use("/api/v1/google-sheets", googleSheetsRoutes);
 app.use("/api/v1/events", eventRouter);
 app.use("/api/v1/integrations", integrationRoutes);
-
+app.use("/api/v1/auth", logoutOtpRoutes);
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
