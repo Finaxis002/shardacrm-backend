@@ -117,23 +117,39 @@ const fetchSheetRows = async (
 /**
  * Convert a row array + fieldMappings + fixedValues → lead object
  */
+const STANDARD_CRM_FIELDS = [
+  "name", "phone", "email", "city", "source",
+  "status", "dealValue", "product", "priority", "closeDate", "skip",
+];
+
 const rowToLead = (row, fieldMappings, fixedValues = []) => {
   const lead = {};
+  const customFields = {};
 
   // Apply column mappings
   fieldMappings.forEach(({ sheetColumnIndex, crmField }) => {
     if (crmField === "skip") return;
     if (crmField === "status") return;
-    if (lead[crmField] !== undefined) return;
-    lead[crmField] = row[sheetColumnIndex] ?? "";
+    if (STANDARD_CRM_FIELDS.includes(crmField)) {
+      if (lead[crmField] !== undefined) return;
+      lead[crmField] = row[sheetColumnIndex] ?? "";
+    } else {
+      
+      customFields[crmField] = row[sheetColumnIndex] ?? "";
+    }
   });
 
   // Apply fixed values (override)
   fixedValues.forEach(({ crmField, value }) => {
     if (crmField === "status") return;
-    lead[crmField] = value;
+    if (STANDARD_CRM_FIELDS.includes(crmField)) {
+      lead[crmField] = value;
+    } else {
+      customFields[crmField] = value;
+    }
   });
 
+  lead.customFields = customFields;
   return lead;
 };
 
@@ -234,7 +250,6 @@ const lead = new Lead({
   email:      validEmail,
   city:       leadData.city || "",
   source:     VALID_SOURCES.includes(sourceRaw) ? sourceRaw : "Google Sheet",
- status:     "New",
   status:     isRepeat ? "Repeat" : "New",
   dealValue:  Number(leadData.dealValue) || 0,
   product:    leadData.product || "",
@@ -244,7 +259,8 @@ const lead = new Lead({
   organization,
   createdBy,
   isDuplicate: isRepeat,
-  sheetName:  sheetName || "",   
+  sheetName:  sheetName || "",
+  customFields: leadData.customFields || {},
 });
 
     await lead.save();
