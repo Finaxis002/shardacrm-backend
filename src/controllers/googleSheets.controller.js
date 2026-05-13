@@ -400,7 +400,7 @@ export const registerSheet = asyncHandler(async (req, res) => {
  */
 export const saveMapping = asyncHandler(async (req, res) => {
   const { syncId } = req.params;
-  const { fieldMappings, fixedValues = [] } = req.body;
+  const { fieldMappings, fixedValues = [], isEdit = false } = req.body;
   const organization = req.user.organization;
   const createdBy = req.user._id;
 
@@ -417,36 +417,42 @@ export const saveMapping = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Phone column must be mapped");
 
 sync.fieldMappings = fieldMappings;
-  sync.fixedValues = fixedValues;
-  sync.isActive = false;
-  await sync.save();
+sync.fixedValues = fixedValues;
+sync.isActive = true;
+await sync.save();
 
-  // Respond immediately, run first import in background
+
+// Respond immediately
   res.status(202).json(
     new ApiResponse(
       202,
       {
         syncId: sync._id,
-        status: "first_import_started",
-        message: "Mapping saved. First import running in background.",
+        status: isEdit ? "mapping_updated" : "first_import_started",
+        message: isEdit
+          ? "Mapping updated successfully."
+          : "Mapping saved. First import running in background.",
       },
       "Mapping saved",
     ),
   );
 
-  // Background: first import
-  runFirstImport({ sync, organization, createdBy }).catch((err) => {
-    logger.error(`First import failed for ${syncId}: ${err.message}`);
-  });
+  // Background: first import sirf nayi connection par
+  if (!isEdit) {
+    runFirstImport({ sync, organization, createdBy }).catch((err) => {
+      logger.error(`First import failed for ${syncId}: ${err.message}`);
+    });
+  }
 });
 
 /**
  * Background: First import — fetch all existing rows
  */
 const runFirstImport = async ({ sync, organization, createdBy }) => {
-  // Fresh fetch karo DB se
   const freshSync = await GoogleSheetSync.findById(sync._id).lean();
   const sheetName = freshSync?.sheetName || sync.sheetName || "";
+  const fieldMappings = freshSync?.fieldMappings || sync.fieldMappings;
+  const fixedValues = freshSync?.fixedValues || sync.fixedValues;
   
   console.log("🔍 runFirstImport sheetName:", sheetName);
   
@@ -454,16 +460,16 @@ const runFirstImport = async ({ sync, organization, createdBy }) => {
     const rows = await fetchSheetRows(sync.sheetId, sync.tabName, sync.accessToken, 2, 10000);
     console.log("First import - rows fetched:", rows.length, "syncId:", sync._id);
 
-    const { imported, skipped } = await saveLeadsFromRows({
-      rows,
-      fieldMappings: sync.fieldMappings,
-      fixedValues: sync.fixedValues,
-      organization,
-      createdBy,
-      assignedTo:    createdBy,
-      syncId:        sync._id,
-      sheetName,          // ← fresh value
-    });
+ const { imported, skipped } = await saveLeadsFromRows({
+  rows,
+  fieldMappings: fieldMappings,   
+  fixedValues: fixedValues,       
+  organization,
+  createdBy,
+  assignedTo: createdBy,
+  syncId: sync._id,
+  sheetName,
+});
 
     sync.lastRowSynced = rows.length + 1;
     sync.lastSyncedAt = new Date();
@@ -574,15 +580,15 @@ export const syncNewRows = async (sync) => {
     }
 
     const { imported, skipped } = await saveLeadsFromRows({
-      rows,
-      fieldMappings: sync.fieldMappings,
-      fixedValues: sync.fixedValues,
-      organization: sync.organization,
-      createdBy: sync.createdBy,
-      assignedTo: sync.createdBy,
-      syncId: sync._id,
-        sheetName,
-    });
+  rows,
+  fieldMappings: sync.fieldMappings,   // ← ye wala rehne do, change mat karo
+  fixedValues: sync.fixedValues,        // ← ye wala rehne do, change mat karo
+  organization: sync.organization,
+  createdBy: sync.createdBy,
+  assignedTo: sync.createdBy,
+  syncId: sync._id,
+  sheetName,
+});
 
     sync.lastRowSynced += rows.length;
     sync.lastSyncedAt = new Date();
