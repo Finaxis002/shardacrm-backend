@@ -334,6 +334,16 @@ export const exportOrganizationData = asyncHandler(async (req, res) => {
   );
 });
 
+export const exportOnlyLeads = asyncHandler(async (req, res) => {
+  const organization = req.user.organization;
+
+  const leads = await Lead.find({ organization }).lean();
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, { leads }, "Leads export fetched successfully"));
+});
+
 export const clearLeads = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
 
