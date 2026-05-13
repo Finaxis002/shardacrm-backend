@@ -7,7 +7,7 @@
  */
 export const parsePagination = ({ page, limit }) => {
   const pageNum = parseInt(page, 10) || 1;
-  const pageLimit = parseInt(limit, 10) || 10;
+    const pageLimit = Math.min(100, Math.max(1, parseInt(limit) || 20));
   const skip = (pageNum - 1) * pageLimit;
 
   return { skip, limit: pageLimit, page: pageNum };
