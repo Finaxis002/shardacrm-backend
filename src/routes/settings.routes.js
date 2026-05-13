@@ -5,6 +5,7 @@ import {
   getSettings,
   updateSettings,
   exportOrganizationData,
+  exportOnlyLeads,
   clearLeads,
   getPipelineStages,
   updatePipelineStages,
@@ -34,6 +35,7 @@ router.patch(
   updatePipelineStages,
 );
 router.get("/export", exportOrganizationData);
+router.get("/export-leads", exportOnlyLeads);
 router.delete("/clear-leads", clearLeads);
 
 export default router;
