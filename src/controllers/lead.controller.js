@@ -394,6 +394,7 @@ export const createLead = asyncHandler(async (req, res) => {
     assignedTo,
     coAssignees = [],
     activity,
+    activities, 
     recording,
     payment,
     reminder,
@@ -497,35 +498,38 @@ export const createLead = asyncHandler(async (req, res) => {
     );
   }
 
-  if (activity && activity.type) {
-    const activityData = {
-      leadId: lead._id,
-      type: activity.type,
-      text: activity.text || "",
-      createdBy: req.user._id,
-      organization,
-      notifiedUsers: activity.notifiedUsers || [],
-    };
+const activityList = Array.isArray(activities)
+  ? activities
+  : activity && activity.type
+  ? [activity]
+  : [];
 
-    if (activity.type === "Call") {
-      activityData.callDuration = activity.callDuration;
-      activityData.callDirection = activity.callDirection;
-      activityData.callOutcome = activity.callOutcome;
-    }
-    if (activity.type === "Task") {
-      activityData.taskDueDate = activity.taskDueDate;
-      activityData.taskAssignedTo = activity.taskAssignedTo;
-      activityData.taskCompleted = false;
-    }
-
-    activityData.notifiedUsers = Array.isArray(activityData.notifiedUsers)
-      ? activityData.notifiedUsers.filter(Boolean)
-      : activityData.notifiedUsers
-        ? [activityData.notifiedUsers]
-        : [];
-
-    activityPromises.push(Activity.create(activityData));
+for (const act of activityList) {
+  if (!act?.type) continue;
+  const activityData = {
+    leadId: lead._id,
+    type: act.type,
+    text: act.text || "",
+    createdBy: req.user._id,
+    organization,
+    notifiedUsers: Array.isArray(act.notifiedUsers)
+      ? act.notifiedUsers.filter(Boolean)
+      : act.notifiedUsers
+      ? [act.notifiedUsers]
+      : [],
+  };
+  if (act.type === "Call") {
+    activityData.callDuration = act.callDuration;
+    activityData.callDirection = act.callDirection;
+    activityData.callOutcome = act.callOutcome;
   }
+  if (act.type === "Task") {
+    activityData.taskDueDate = act.taskDueDate;
+    activityData.taskAssignedTo = act.taskAssignedTo;
+    activityData.taskCompleted = false;
+  }
+  activityPromises.push(Activity.create(activityData));
+}
 
   if (recording && (recording.label || recording.url)) {
     activityPromises.push(
@@ -823,34 +827,43 @@ export const updateLead = asyncHandler(async (req, res) => {
     });
   }
 
-  if (req.body.activity && req.body.activity.type) {
-    const activity = req.body.activity;
-    const activityData = {
-      leadId: lead._id,
-      type: activity.type,
-      text: activity.text || "",
-      createdBy: userId,
-      organization,
-      notifiedUsers: Array.isArray(activity.notifiedUsers)
-        ? activity.notifiedUsers.filter(Boolean)
-        : activity.notifiedUsers
-          ? [activity.notifiedUsers]
-          : [],
-    };
+// updateLead mein
+const activityList = Array.isArray(req.body.activities)
+  ? req.body.activities
+  : req.body.activity && req.body.activity.type
+  ? [req.body.activity]
+  : [];
 
-    if (activity.type === "Call") {
-      activityData.callDuration = activity.callDuration;
-      activityData.callDirection = activity.callDirection;
-      activityData.callOutcome = activity.callOutcome;
-    }
-    if (activity.type === "Task") {
-      activityData.taskDueDate = activity.taskDueDate;
-      activityData.taskAssignedTo = activity.taskAssignedTo;
-      activityData.taskCompleted = false;
-    }
-
+for (const act of activityList) {
+  if (!act?.type) continue;
+  const activityData = {
+    leadId: lead._id,
+    type: act.type,
+    text: act.text || "",
+    createdBy: userId,
+    organization,
+    notifiedUsers: Array.isArray(act.notifiedUsers)
+      ? act.notifiedUsers.filter(Boolean)
+      : act.notifiedUsers
+      ? [act.notifiedUsers]
+      : [],
+  };
+  if (act.type === "Call") {
+    activityData.callDuration = act.callDuration;
+    activityData.callDirection = act.callDirection;
+    activityData.callOutcome = act.callOutcome;
+  }
+  if (act.type === "Task") {
+    activityData.taskDueDate = act.taskDueDate;
+    activityData.taskAssignedTo = act.taskAssignedTo;
+    activityData.taskCompleted = false;
+  }
+    if (act._id) {
+    await Activity.findByIdAndUpdate(act._id, activityData);
+  } else {
     await Activity.create(activityData);
   }
+}
 
   if (req.body.payment && req.body.payment.amount !== undefined) {
     const paymentPayload = {
@@ -1316,4 +1329,144 @@ export const getLeadStats = asyncHandler(async (req, res) => {
       "Lead statistics fetched successfully",
     ),
   );
+});
+
+export const bulkDeleteLeads = asyncHandler(async (req, res) => {
+  const { ids } = req.body;
+  const organization = req.user.organization;
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new ApiError(400, "No lead IDs provided");
+  }
+
+  const canDelete =
+    req.user.role === "admin" ||
+    (await canUser(req.user, organization, "delete_leads"));
+  if (!canDelete) {
+    throw new ApiError(403, "Not authorized to delete leads");
+  }
+
+  // Delete all associated data
+  await Promise.all([
+    Activity.deleteMany({ leadId: { $in: ids }, organization }),
+    Reminder.deleteMany({ leadId: { $in: ids }, organization }),
+    Payment.deleteMany({ leadId: { $in: ids }, organization }),
+  ]);
+
+  const result = await Lead.deleteMany({ _id: { $in: ids }, organization });
+
+  logger.info(
+    `Bulk deleted ${result.deletedCount} leads by user ${req.user._id}`,
+  );
+
+  res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        { deleted: result.deletedCount },
+        `${result.deletedCount} leads deleted successfully`,
+      ),
+    );
+});
+
+/**
+ * Bulk assign leads
+ * @route PATCH /api/v1/leads/bulk/assign
+ * @access Private
+ */
+export const bulkAssignLeads = asyncHandler(async (req, res) => {
+  const { ids, assignedTo } = req.body;
+  const organization = req.user.organization;
+  const userId = req.user._id;
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new ApiError(400, "No lead IDs provided");
+  }
+  if (!assignedTo) {
+    throw new ApiError(400, "assignedTo is required");
+  }
+
+  const hasPermission =
+    req.user.role === "admin" ||
+    (await canUser(req.user, organization, "assign_leads"));
+  if (!hasPermission) {
+    throw new ApiError(403, "Not authorized to assign leads");
+  }
+
+  const assignee = await User.findOne({ _id: assignedTo, organization });
+  if (!assignee) {
+    throw new ApiError(400, "Assigned user not found in organization");
+  }
+
+  await Lead.updateMany(
+    { _id: { $in: ids }, organization },
+    { $set: { assignedTo } },
+  );
+
+  // Log activity for each lead
+  const activities = ids.map((leadId) => ({
+    leadId,
+    type: "Note",
+    text: `Lead bulk assigned to ${assignee.name} by ${req.user.name}`,
+    createdBy: userId,
+    organization,
+  }));
+  await Activity.insertMany(activities);
+
+  logger.info(
+    `Bulk assigned ${ids.length} leads to ${assignedTo} by user ${userId}`,
+  );
+
+  res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        { updated: ids.length },
+        `${ids.length} leads assigned to ${assignee.name}`,
+      ),
+    );
+});
+
+export const getLeadIds = asyncHandler(async (req, res) => {
+  const { status, source, assignedTo, search } = req.query;
+  const userId = req.user._id;
+  const organization = req.user.organization;
+  const isAdmin = req.user.role === "admin";
+  const canViewAllLeads =
+    isAdmin || (await canUser(req.user, organization, "view_all_leads"));
+
+  const filter = { organization };
+  if (status) filter.status = status;
+  if (source) filter.source = source;
+
+  let accessFilter = null;
+  if (canViewAllLeads) {
+    if (assignedTo) filter.assignedTo = assignedTo;
+  } else {
+    accessFilter = { $or: [{ assignedTo: userId }, { coAssignees: userId }] };
+  }
+
+  if (search) {
+    const searchFilter = {
+      $or: [
+        { name: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+        { phone: { $regex: search, $options: "i" } },
+      ],
+    };
+    if (accessFilter) {
+      filter.$and = [accessFilter, searchFilter];
+    } else {
+      filter.$or = searchFilter.$or;
+    }
+  } else if (accessFilter) {
+    Object.assign(filter, accessFilter);
+  }
+
+  const leads = await Lead.find(filter).select("_id").lean();
+  const ids = leads.map((l) => l._id);
+
+  res.status(200).json(new ApiResponse(200, { ids }, "Lead IDs fetched"));
 });

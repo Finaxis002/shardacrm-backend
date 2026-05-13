@@ -10,6 +10,9 @@ import {
   addCoAssignee,
   removeCoAssignee,
   getLeadStats,
+  bulkAssignLeads,
+  bulkDeleteLeads,
+  getLeadIds
 } from "../controllers/lead.controller.js";
 import { verifyJWT } from "../middleware/auth.middleware.js";
 import { checkPermission } from "../middleware/rbac.middleware.js";
@@ -26,7 +29,9 @@ const router = Router();
 
 // Apply auth middleware to all routes
 router.use(verifyJWT);
-
+router.delete("/bulk", bulkDeleteLeads);
+router.patch("/bulk/assign", bulkAssignLeads);
+router.get("/ids", getLeadIds);
 // GET routes
 router.get("/", validateRequest(searchLeadsValidator, "query"), getLeads);
 
