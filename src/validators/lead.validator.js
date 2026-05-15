@@ -13,7 +13,7 @@ export const createLeadValidator = Joi.object({
   product: Joi.string().optional(),
   closeDate: Joi.date().optional(),
   priority: Joi.string().valid("Normal", "High", "Urgent").optional(),
-  note: Joi.string().optional(),
+  note: Joi.string().optional().allow(""),
   assignedTo: Joi.string().optional(),
   coAssignees: Joi.array().items(Joi.string()).optional(),
   activity: Joi.object({

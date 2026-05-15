@@ -17,6 +17,7 @@ const activitySchema = new mongoose.Schema(
         "Recording",
         "Task",
         "Status Change",
+        "Lead Reassignment",
       ],
       required: true,
     },
