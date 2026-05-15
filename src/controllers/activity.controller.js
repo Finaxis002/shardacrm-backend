@@ -214,7 +214,7 @@ export const getLeadActivities = asyncHandler(async (req, res) => {
     .skip(skip)
     .limit(pageLimit)
     .populate("createdBy", "name email")
-    .sort({ createdAt: -1 })
+    .sort({ updatedAt: -1, createdAt: -1 })
     .lean();
 
   const total = await Activity.countDocuments({ leadId, organization });

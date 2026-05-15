@@ -394,7 +394,7 @@ export const createLead = asyncHandler(async (req, res) => {
     assignedTo,
     coAssignees = [],
     activity,
-    activities, 
+    activities,
     recording,
     payment,
     reminder,
@@ -498,38 +498,38 @@ export const createLead = asyncHandler(async (req, res) => {
     );
   }
 
-const activityList = Array.isArray(activities)
-  ? activities
-  : activity && activity.type
-  ? [activity]
-  : [];
+  const activityList = Array.isArray(activities)
+    ? activities
+    : activity && activity.type
+      ? [activity]
+      : [];
 
-for (const act of activityList) {
-  if (!act?.type) continue;
-  const activityData = {
-    leadId: lead._id,
-    type: act.type,
-    text: act.text || "",
-    createdBy: req.user._id,
-    organization,
-    notifiedUsers: Array.isArray(act.notifiedUsers)
-      ? act.notifiedUsers.filter(Boolean)
-      : act.notifiedUsers
-      ? [act.notifiedUsers]
-      : [],
-  };
-  if (act.type === "Call") {
-    activityData.callDuration = act.callDuration;
-    activityData.callDirection = act.callDirection;
-    activityData.callOutcome = act.callOutcome;
+  for (const act of activityList) {
+    if (!act?.type) continue;
+    const activityData = {
+      leadId: lead._id,
+      type: act.type,
+      text: act.text || "",
+      createdBy: req.user._id,
+      organization,
+      notifiedUsers: Array.isArray(act.notifiedUsers)
+        ? act.notifiedUsers.filter(Boolean)
+        : act.notifiedUsers
+          ? [act.notifiedUsers]
+          : [],
+    };
+    if (act.type === "Call") {
+      activityData.callDuration = act.callDuration;
+      activityData.callDirection = act.callDirection;
+      activityData.callOutcome = act.callOutcome;
+    }
+    if (act.type === "Task") {
+      activityData.taskDueDate = act.taskDueDate;
+      activityData.taskAssignedTo = act.taskAssignedTo;
+      activityData.taskCompleted = false;
+    }
+    activityPromises.push(Activity.create(activityData));
   }
-  if (act.type === "Task") {
-    activityData.taskDueDate = act.taskDueDate;
-    activityData.taskAssignedTo = act.taskAssignedTo;
-    activityData.taskCompleted = false;
-  }
-  activityPromises.push(Activity.create(activityData));
-}
 
   if (recording && (recording.label || recording.url)) {
     activityPromises.push(
@@ -665,11 +665,21 @@ export const updateLead = asyncHandler(async (req, res) => {
     }
   });
 
+  const previousRecording = lead.recording
+    ? { ...lead.recording }
+    : { label: "", url: "" };
+
+  let recordingChanged = false;
   if (req.body.recording !== undefined) {
-    lead.recording = {
-      label: req.body.recording.label || "",
-      url: req.body.recording.url || "",
+    const recordingPayload = req.body.recording || {};
+    const incomingRecording = {
+      label: recordingPayload.label || "",
+      url: recordingPayload.url || "",
     };
+    recordingChanged =
+      incomingRecording.label !== previousRecording.label ||
+      incomingRecording.url !== previousRecording.url;
+    lead.recording = incomingRecording;
   }
 
   if (req.body.coAssignees !== undefined) {
@@ -775,7 +785,8 @@ export const updateLead = asyncHandler(async (req, res) => {
     const hasLeadUpdate =
       allowedFields.some((field) => req.body[field] !== undefined) ||
       req.body.coAssignees !== undefined ||
-      requestedAssignedTo !== undefined;
+      requestedAssignedTo !== undefined ||
+      req.body.recording !== undefined;
 
     if (hasLeadUpdate) {
       const updateRecipients = buildLeadNotificationRecipients(lead, userId);
@@ -820,50 +831,116 @@ export const updateLead = asyncHandler(async (req, res) => {
 
     await Activity.create({
       leadId: lead._id,
-      type: "Note",
+      type: "Lead Reassignment",
       text: `Lead reassigned from ${previousName} to ${newUser?.name || "Unknown"}`,
       createdBy: userId,
       organization,
     });
   }
 
-// updateLead mein
-const activityList = Array.isArray(req.body.activities)
-  ? req.body.activities
-  : req.body.activity && req.body.activity.type
-  ? [req.body.activity]
-  : [];
+  if (req.body.recording !== undefined && recordingChanged) {
+    await Activity.create({
+      leadId: lead._id,
+      type: "Recording",
+      text: lead.recording.label || "Recording Deleted",
+      recordingUrl: lead.recording.url || undefined,
+      createdBy: userId,
+      organization,
+    });
+  }
 
-for (const act of activityList) {
-  if (!act?.type) continue;
-  const activityData = {
-    leadId: lead._id,
-    type: act.type,
-    text: act.text || "",
-    createdBy: userId,
-    organization,
-    notifiedUsers: Array.isArray(act.notifiedUsers)
-      ? act.notifiedUsers.filter(Boolean)
-      : act.notifiedUsers
-      ? [act.notifiedUsers]
-      : [],
-  };
-  if (act.type === "Call") {
-    activityData.callDuration = act.callDuration;
-    activityData.callDirection = act.callDirection;
-    activityData.callOutcome = act.callOutcome;
-  }
-  if (act.type === "Task") {
-    activityData.taskDueDate = act.taskDueDate;
-    activityData.taskAssignedTo = act.taskAssignedTo;
-    activityData.taskCompleted = false;
-  }
+  // updateLead mein
+  const activityList = Array.isArray(req.body.activities)
+    ? req.body.activities
+    : req.body.activity && req.body.activity.type
+      ? [req.body.activity]
+      : [];
+
+  for (const act of activityList) {
+    if (!act?.type) continue;
+
+    const activityData = {
+      leadId: lead._id,
+      type: act.type,
+      text: act.text !== undefined ? act.text : "",
+      createdBy: userId,
+      organization,
+      notifiedUsers: Array.isArray(act.notifiedUsers)
+        ? act.notifiedUsers.filter(Boolean)
+        : act.notifiedUsers
+          ? [act.notifiedUsers]
+          : [],
+    };
+
+    if (act.type === "Call") {
+      activityData.callDuration =
+        act.callDuration !== undefined ? act.callDuration : "";
+      activityData.callDirection = act.callDirection;
+      activityData.callOutcome = act.callOutcome;
+    }
+
+    if (act.type === "Task") {
+      activityData.taskDueDate =
+        act.taskDueDate !== undefined ? act.taskDueDate : "";
+      activityData.taskAssignedTo = act.taskAssignedTo;
+      activityData.taskCompleted = false;
+    }
+
     if (act._id) {
-    await Activity.findByIdAndUpdate(act._id, activityData);
-  } else {
-    await Activity.create(activityData);
+      const existingActivity = await Activity.findOne({
+        _id: act._id,
+        organization,
+      });
+      if (!existingActivity) continue;
+
+      const hasTextChange = activityData.text !== existingActivity.text;
+      const normalizeIds = (value) =>
+        Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+      const existingNotified = normalizeIds(existingActivity.notifiedUsers);
+      const incomingNotified = normalizeIds(activityData.notifiedUsers);
+      const hasNotifyChange =
+        existingNotified.length !== incomingNotified.length ||
+        existingNotified.some((id, index) => id !== incomingNotified[index]);
+
+      let hasOtherChange = hasTextChange || hasNotifyChange;
+
+      if (act.type === "Call") {
+        if (activityData.callDuration !== existingActivity.callDuration) {
+          hasOtherChange = true;
+        }
+        if (activityData.callDirection !== existingActivity.callDirection) {
+          hasOtherChange = true;
+        }
+        if (activityData.callOutcome !== existingActivity.callOutcome) {
+          hasOtherChange = true;
+        }
+      }
+
+      if (act.type === "Task") {
+        const existingDue = existingActivity.taskDueDate
+          ? existingActivity.taskDueDate.toISOString().split("T")[0]
+          : "";
+        const incomingDue = activityData.taskDueDate
+          ? new Date(activityData.taskDueDate).toISOString().split("T")[0]
+          : "";
+        if (incomingDue !== existingDue) {
+          hasOtherChange = true;
+        }
+        if (
+          String(activityData.taskAssignedTo || "") !==
+          String(existingActivity.taskAssignedTo || "")
+        ) {
+          hasOtherChange = true;
+        }
+      }
+
+      if (hasOtherChange) {
+        await Activity.create(activityData);
+      }
+    } else if (activityData.text.trim()) {
+      await Activity.create(activityData);
+    }
   }
-}
 
   if (req.body.payment && req.body.payment.amount !== undefined) {
     const paymentPayload = {
