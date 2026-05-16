@@ -27,72 +27,84 @@ export const getLeads = asyncHandler(async (req, res) => {
   const canViewAllLeads =
     isAdmin || (await canUser(req.user, organization, "view_all_leads"));
 
-  // Build filter
-  const filter = { organization };
+  const queryConditions = [{ organization }];
+
   if (status) {
     const statuses = String(status)
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
     if (statuses.length === 1) {
-      filter.status = statuses[0];
+      queryConditions.push({ status: statuses[0] });
     } else if (statuses.length > 1) {
-      filter.status = { $in: statuses };
+      queryConditions.push({ status: { $in: statuses } });
     }
   }
-  if (source) filter.source = source;
+  if (source) queryConditions.push({ source });
 
-let accessFilter = null;
-
- const viewTeamOnly = await canUser(req.user, organization, "view_team_leads_only");
+  let accessFilter = null;
+  const viewTeamOnly = await canUser(
+    req.user,
+    organization,
+    "view_team_leads_only",
+  );
 
   if (isAdmin) {
-    if (assignedTo) filter.assignedTo = assignedTo;
-
+    if (assignedTo) {
+      queryConditions.push({
+        assignedTo: new mongoose.Types.ObjectId(assignedTo),
+      });
+    }
   } else if (req.user.role === "manager" && canViewAllLeads) {
-    // Manager ko view_all_leads permission di hai — sab dikhao
-    if (assignedTo) filter.assignedTo = assignedTo;
-
+    if (assignedTo) {
+      queryConditions.push({
+        assignedTo: new mongoose.Types.ObjectId(assignedTo),
+      });
+    }
   } else if (req.user.role === "manager" && viewTeamOnly) {
-    // Manager ko sirf team ki leads dikhao
-    const subordinates = await User.find({ managerId: userId, organization }).select("_id").lean();
+    const subordinates = await User.find({ managerId: userId, organization })
+      .select("_id")
+      .lean();
     const subordinateIds = subordinates.map((u) => u._id);
     const allowedIds = [userId, ...subordinateIds];
+
     accessFilter = {
       $or: [
         { assignedTo: { $in: allowedIds } },
         { coAssignees: { $in: allowedIds } },
       ],
     };
+    queryConditions.push(accessFilter);
+
     if (assignedTo && allowedIds.map(String).includes(String(assignedTo))) {
-      filter.assignedTo = assignedTo;
+      queryConditions.push({
+        assignedTo: new mongoose.Types.ObjectId(assignedTo),
+      });
     }
-
   } else if (canViewAllLeads) {
-    if (assignedTo) filter.assignedTo = assignedTo;
-
+    if (assignedTo) {
+      queryConditions.push({
+        assignedTo: new mongoose.Types.ObjectId(assignedTo),
+      });
+    }
   } else {
     accessFilter = {
       $or: [{ assignedTo: userId }, { coAssignees: userId }],
     };
+    queryConditions.push(accessFilter);
   }
-  // Search in name, email, or phone
+
   if (search) {
-    const searchFilter = {
+    queryConditions.push({
       $or: [
         { name: { $regex: search, $options: "i" } },
         { email: { $regex: search, $options: "i" } },
         { phone: { $regex: search, $options: "i" } },
       ],
-    };
-    if (accessFilter) {
-      filter.$and = [accessFilter, searchFilter];
-    } else {
-      filter.$or = searchFilter.$or;
-    }
-  } else if (accessFilter) {
-    Object.assign(filter, accessFilter);
+    });
   }
+
+  const filter = { $and: queryConditions };
 
   const {
     skip,
@@ -103,43 +115,67 @@ let accessFilter = null;
     limit,
   });
 
-  const leads = await Lead.find(filter)
-    .sort({ updatedAt: -1 })
-    .skip(skip)
-    .limit(pageLimit)
-    .populate("assignedTo", "name email")
-    .populate("coAssignees", "name email")
-    .lean();
-
-  const total = await Lead.countDocuments(filter);
-  const aggregationFilter = { ...filter };
-  if (
-    aggregationFilter.assignedTo &&
-    mongoose.isValidObjectId(aggregationFilter.assignedTo)
-  ) {
-    aggregationFilter.assignedTo = new mongoose.Types.ObjectId(
-      aggregationFilter.assignedTo,
-    );
-  }
-  const totalValueAgg = await Lead.aggregate([
-    { $match: aggregationFilter },
+  const aggregationResult = await Lead.aggregate([
+    { $match: filter },
     {
-      $group: {
-        _id: null,
-        totalValue: {
-          $sum: {
-            $convert: {
-              input: { $ifNull: ["$dealValue", "$value", 0] },
-              to: "double",
-              onError: 0,
-              onNull: 0,
+      $facet: {
+        metadata: [{ $count: "total" }],
+        totalValue: [
+          {
+            $group: {
+              _id: null,
+              sum: {
+                $sum: {
+                  $convert: {
+                    input: { $ifNull: ["$dealValue", "$value", 0] },
+                    to: "double",
+                    onError: 0,
+                    onNull: 0,
+                  },
+                },
+              },
             },
           },
-        },
+        ],
+        data: [
+          { $sort: { updatedAt: -1 } },
+          { $skip: skip },
+          { $limit: pageLimit },
+          {
+            $lookup: {
+              from: "users",
+              localField: "assignedTo",
+              foreignField: "_id",
+              as: "assignedTo",
+            },
+          },
+          {
+            $unwind: { path: "$assignedTo", preserveNullAndEmptyArrays: true },
+          },
+          {
+            $lookup: {
+              from: "users",
+              localField: "coAssignees",
+              foreignField: "_id",
+              as: "coAssignees",
+            },
+          },
+          {
+            $project: {
+              "assignedTo.password": 0,
+              "assignedTo.tokens": 0,
+              "coAssignees.password": 0,
+              "coAssignees.tokens": 0,
+            },
+          },
+        ],
       },
     },
   ]);
-  const totalValue = totalValueAgg[0]?.totalValue || 0;
+
+  const leads = aggregationResult[0]?.data || [];
+  const total = aggregationResult[0]?.metadata[0]?.total || 0;
+  const totalValue = aggregationResult[0]?.totalValue[0]?.sum || 0;
 
   logger.info(`Fetched ${leads.length} leads for user ${userId}`);
 
@@ -1532,7 +1568,7 @@ export const getLeadIds = asyncHandler(async (req, res) => {
   const { status, source, assignedTo, search } = req.query;
   const userId = req.user._id;
   const organization = req.user.organization;
-const isAdmin = req.user.role === "admin";
+  const isAdmin = req.user.role === "admin";
   const canViewAllLeads =
     isAdmin || (await canUser(req.user, organization, "view_all_leads"));
 
