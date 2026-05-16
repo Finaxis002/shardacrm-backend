@@ -42,18 +42,40 @@ export const getLeads = asyncHandler(async (req, res) => {
   }
   if (source) filter.source = source;
 
-  let accessFilter = null;
+let accessFilter = null;
 
-  if (canViewAllLeads) {
-    if (assignedTo) {
+ const viewTeamOnly = await canUser(req.user, organization, "view_team_leads_only");
+
+  if (isAdmin) {
+    if (assignedTo) filter.assignedTo = assignedTo;
+
+  } else if (req.user.role === "manager" && canViewAllLeads) {
+    // Manager ko view_all_leads permission di hai — sab dikhao
+    if (assignedTo) filter.assignedTo = assignedTo;
+
+  } else if (req.user.role === "manager" && viewTeamOnly) {
+    // Manager ko sirf team ki leads dikhao
+    const subordinates = await User.find({ managerId: userId, organization }).select("_id").lean();
+    const subordinateIds = subordinates.map((u) => u._id);
+    const allowedIds = [userId, ...subordinateIds];
+    accessFilter = {
+      $or: [
+        { assignedTo: { $in: allowedIds } },
+        { coAssignees: { $in: allowedIds } },
+      ],
+    };
+    if (assignedTo && allowedIds.map(String).includes(String(assignedTo))) {
       filter.assignedTo = assignedTo;
     }
+
+  } else if (canViewAllLeads) {
+    if (assignedTo) filter.assignedTo = assignedTo;
+
   } else {
     accessFilter = {
       $or: [{ assignedTo: userId }, { coAssignees: userId }],
     };
   }
-
   // Search in name, email, or phone
   if (search) {
     const searchFilter = {
@@ -1510,7 +1532,7 @@ export const getLeadIds = asyncHandler(async (req, res) => {
   const { status, source, assignedTo, search } = req.query;
   const userId = req.user._id;
   const organization = req.user.organization;
-  const isAdmin = req.user.role === "admin";
+const isAdmin = req.user.role === "admin";
   const canViewAllLeads =
     isAdmin || (await canUser(req.user, organization, "view_all_leads"));
 

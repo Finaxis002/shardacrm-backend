@@ -37,10 +37,11 @@ export const getTeamMembers = asyncHandler(async (req, res) => {
   });
 
   const users = await User.find(filter)
-    .select("-password")
-    .skip(skip)
-    .limit(pageLimit)
-    .lean();
+  .select("-password")
+  .populate("managerId", "name email")   
+  .skip(skip)
+  .limit(pageLimit)
+  .lean();
 
   const total = await User.countDocuments(filter);
 
@@ -110,7 +111,7 @@ export const getUser = asyncHandler(async (req, res) => {
  * @access Private (Admin only)
  */
 export const createTeamMember = asyncHandler(async (req, res) => {
-  const { name, email, password, phone, role } = req.body;
+  const { name, email, password, phone, role, managerId } = req.body;
   const organization = req.user.organization;
 
   if (!password) {
@@ -136,6 +137,7 @@ export const createTeamMember = asyncHandler(async (req, res) => {
     phone,
     role: role || "viewer",
     organization,
+    managerId: managerId || null,
   });
 
   await user.save();
@@ -148,6 +150,7 @@ export const createTeamMember = asyncHandler(async (req, res) => {
     phone: user.phone,
     role: user.role,
     organization: user.organization,
+     managerId: user.managerId,
   };
 
   logger.info(
@@ -168,7 +171,7 @@ export const createTeamMember = asyncHandler(async (req, res) => {
  */
 export const updateUser = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { name, phone, role, password } = req.body;
+  const { name, phone, role, password, managerId } = req.body;
   const organization = req.user.organization;
   const currentUserId = req.user._id;
 
@@ -202,7 +205,7 @@ export const updateUser = asyncHandler(async (req, res) => {
   if (name) userToUpdate.name = name;
   if (phone) userToUpdate.phone = phone;
   if (password) userToUpdate.password = password;
-
+if (managerId !== undefined) userToUpdate.managerId = managerId || null;
   await userToUpdate.save();
 
   const userResponse = {
@@ -212,6 +215,7 @@ export const updateUser = asyncHandler(async (req, res) => {
     phone: userToUpdate.phone,
     role: userToUpdate.role,
     organization: userToUpdate.organization,
+    managerId: userToUpdate.managerId,
   };
 
   logger.info(`User updated: ${id} by ${currentUserId}`);

@@ -103,6 +103,11 @@ const leadSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    managerId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "User",
+  default: null,
+},
   },
   { timestamps: true },
 );

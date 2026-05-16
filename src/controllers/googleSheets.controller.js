@@ -78,14 +78,16 @@ const getServiceAccountAuth = () => {
 
   if (serviceAccountJson) {
     try {
-      authOptions.credentials = JSON.parse(serviceAccountJson);
+      const parsed = JSON.parse(serviceAccountJson);
+      parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+      authOptions.credentials = parsed;
     } catch (err) {
       throw new ApiError(500, "Invalid GOOGLE_SERVICE_ACCOUNT_JSON provided");
     }
   } else if (serviceAccountPath) {
     authOptions.keyFile = serviceAccountPath;
   } else {
-    authOptions.keyFile = "shardacrm-bcd1191276f4.json";
+    authOptions.keyFile = "shardacrm-bcd1191276f4.json"; // local fallback
   }
 
   return new google.auth.GoogleAuth(authOptions);
