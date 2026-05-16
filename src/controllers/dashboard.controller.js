@@ -1,4 +1,5 @@
 import Lead from "../models/Lead.model.js";
+import User from "../models/User.model.js";
 import Payment from "../models/Payment.model.js";
 import Reminder from "../models/Reminder.model.js";
 import Settings from "../models/Settings.model.js";
@@ -10,12 +11,32 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
   const userId = req.user._id;
 
-  const canViewAll = await canUser(req.user, organization, "view_all_leads");
+const canViewAll = await canUser(req.user, organization, "view_all_leads");
+  const isAdmin = req.user.role === "admin";
+  const isManager = req.user.role === "manager";
 
-  // ✅ Agar permission hai → saari leads, nahi hai → sirf assigned
-  const statsFilter = canViewAll
-    ? { organization }
-    : { organization, $or: [{ assignedTo: userId }, { coAssignees: userId }] };
+  let subordinateIds = [];
+  if (isManager) {
+    const subordinates = await User.find({ managerId: userId, organization })
+      .select("_id")
+      .lean();
+    subordinateIds = subordinates.map((u) => u._id);
+  }
+
+  const allowedIds = isManager ? [userId, ...subordinateIds] : [];
+
+const viewTeamOnly = await canUser(req.user, organization, "view_team_leads_only");
+
+  const statsFilter =
+    isAdmin
+      ? { organization }
+      : isManager && canViewAll
+      ? { organization }
+      : isManager && viewTeamOnly
+      ? { organization, $or: [{ assignedTo: { $in: allowedIds } }, { coAssignees: { $in: allowedIds } }] }
+      : canViewAll
+      ? { organization }
+      : { organization, $or: [{ assignedTo: userId }, { coAssignees: userId }] };
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -41,7 +62,7 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
   ]);
 
   const [recentLeads, todayReminders, teamPerformance] = await Promise.all([
-    Lead.find({ organization, $or: [{ assignedTo: userId }, { coAssignees: userId }] })
+    Lead.find(statsFilter)
       .sort({ createdAt: -1 }).limit(5).populate("assignedTo", "name").lean(),
 
     Reminder.find({
@@ -52,7 +73,7 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
 
     // Team performance — canViewAll ho toh saari leads ka breakdown
     Lead.aggregate([
-      { $match: canViewAll ? { organization } : { organization, $or: [{ assignedTo: userId }, { coAssignees: userId }] } },
+      { $match: statsFilter },
       { $group: { _id: "$assignedTo", leadCount: { $sum: 1 }, totalDealValue: { $sum: { $ifNull: ["$dealValue", 0] } } } },
       { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "user" } },
       { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },

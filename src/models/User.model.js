@@ -81,6 +81,11 @@ const userSchema = new mongoose.Schema(
       scope:         { type: String, default: "" },
     },
     // ─────────────────────────────────────────────────────────────────────
+   managerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
   },
   { timestamps: true },
 );

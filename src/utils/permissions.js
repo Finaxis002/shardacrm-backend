@@ -3,6 +3,7 @@ import { DEFAULT_PERMISSIONS } from "../constants/permissions.js";
 
 export const PERMISSION_LABELS = {
   view_all_leads: "View all leads",
+  view_team_leads_only: "View team leads only",
   add_leads: "Add leads",
   edit_any_lead: "Edit any lead",
   delete_leads: "Delete leads",

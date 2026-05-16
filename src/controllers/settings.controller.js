@@ -24,6 +24,13 @@ const DEFAULT_PERMISSIONS = {
     exec: false,
     viewer: false,
   },
+  "View team leads only": {
+    admin: false,
+    manager: true,
+    tl: false,
+    exec: false,
+    viewer: false,
+  },
   "Add leads": {
     admin: true,
     manager: true,
