@@ -229,12 +229,16 @@ export const getLead = asyncHandler(async (req, res) => {
     .sort({ paymentDate: -1, createdAt: -1 })
     .lean();
 
+  const reminders = await Reminder.find({ leadId: lead._id })
+    .sort({ reminderDate: 1, reminderTime: 1 })
+    .lean();
+
   res
     .status(200)
     .json(
       new ApiResponse(
         200,
-        { ...lead, activities, payments },
+        { ...lead, activities, payments, reminders },
         "Lead fetched successfully",
       ),
     );
