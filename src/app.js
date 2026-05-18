@@ -72,6 +72,14 @@ app.use("/api/v1/google-sheets", googleSheetsRoutes);
 app.use("/api/v1/events", eventRouter);
 app.use("/api/v1/integrations", integrationRoutes);
 app.use("/api/v1/auth", logoutOtpRoutes);
+// New Live Test Route
+app.get("/api/v1/test-live", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "Sharda CRM Backend is working flawlessly on Oracle Cloud!",
+    timestamp: new Date(),
+  });
+});
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
