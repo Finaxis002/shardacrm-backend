@@ -22,6 +22,7 @@ import attendanceRoutes from "./routes/attendance.routes.js";
 import eventRouter from "./routes/event.routes.js";
 import integrationRoutes from "./routes/Integration.routes.js";
 import logoutOtpRoutes from "./routes/Logoutotp.route.js";
+import metaWebhookRoutes from "./routes/metaWebhook.routes.js";
 const app = express();
 
 // Security middleware
@@ -80,6 +81,7 @@ app.get("/api/v1/test-live", (req, res) => {
     timestamp: new Date(),
   });
 });
+app.use("/api/v1/meta", metaWebhookRoutes);
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({

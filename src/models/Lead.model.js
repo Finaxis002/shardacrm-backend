@@ -22,20 +22,21 @@ const leadSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-    source: {
-      type: String,
-      enum: [
-        "Google Ads",
-        "Website",
-        "Referral",
-        "Walk-in",
-        "Cold Call",
-        "Social Media",
-        "Google Sheet",
-        "Other",
-      ],
-      default: "Other",
-    },
+  source: {
+  type: String,
+  enum: [
+    "Google Ads",
+    "Website",
+    "Referral",
+    "Walk-in",
+    "Cold Call",
+    "Social Media",
+    "Google Sheet",
+    "Meta Ads",
+    "Other",
+  ],
+  default: "Other",
+},
     status: {
       type: String,
       default: "New",
@@ -99,6 +100,18 @@ const leadSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    metaAdId: {
+  type: String,
+  default: "",
+},
+metaFormId: {
+  type: String,
+  default: "",
+},
+metaAdName: {
+  type: String,
+  default: "",
+},
     isDuplicate: {
       type: Boolean,
       default: false,
