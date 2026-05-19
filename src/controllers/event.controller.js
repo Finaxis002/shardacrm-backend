@@ -2,7 +2,7 @@ import Event from "../models/Event.model.js";
 import ApiResponse from "../utils/apiResponse.js";
 import ApiError from "../utils/apiError.js";
 import asyncHandler from "../utils/asyncHandler.js";
-
+import { createNotifications } from "../utils/notification.utils.js";
 // ── GET /api/v1/events ────────────────────────────────────────────────────────
 export const getEvents = asyncHandler(async (req, res) => {
   const { limit = 100, page = 1, assignedTo } = req.query;
@@ -29,12 +29,13 @@ if (assignedTo) {
 });
 
 // ── POST /api/v1/events ───────────────────────────────────────────────────────
+// ── POST /api/v1/events ───────────────────────────────────────────────────────
 export const createEvent = asyncHandler(async (req, res) => {
   const { title, eventDate, eventTime, note, assignedTo } = req.body;
 
   if (!title?.trim()) throw new ApiError(400, "Event title is required");
   if (!eventDate)     throw new ApiError(400, "Event date is required");
- if (!Array.isArray(assignedTo) || assignedTo.length === 0) {
+  if (!Array.isArray(assignedTo) || assignedTo.length === 0) {
     throw new ApiError(400, "At least one assigned user is required");
   }
 
@@ -51,6 +52,23 @@ export const createEvent = asyncHandler(async (req, res) => {
   // Populate before returning so frontend gets name/email directly
   await event.populate("assignedTo", "name email");
   await event.populate("createdBy",  "name email");
+
+  // ── Notifications to all assigned users ──────────────────────────────────
+  const recipientIds = assignedTo.map((id) => id?.toString?.() || id);
+
+  const eventDateStr = new Date(eventDate).toLocaleDateString("en-IN", {
+    year: "numeric", month: "short", day: "numeric",
+  });
+
+  await createNotifications({
+    recipientIds,
+    senderId:     req.user._id,
+    organization: req.user.organization,
+    title:        `New Event: ${title.trim()}`,
+    message:      `${req.user.name} added an event "${title.trim()}" on ${eventDateStr}${eventTime ? ` at ${eventTime}` : ""}.${note?.trim() ? ` Note: ${note.trim()}` : ""}`,
+    type:         "reminder",
+    actionUrl:    "/calendar",
+  });
 
   res.status(201).json(new ApiResponse(201, event, "Event created successfully"));
 });

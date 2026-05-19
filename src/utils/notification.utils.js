@@ -88,11 +88,6 @@ const triggerPushNotification = async (
           await PushSubscription.deleteOne({ _id: subscription._id });
           return;
         }
-        console.error(
-          "Push notification delivery failed for subscription",
-          subscription.endpoint,
-          error,
-        );
       }
     }),
   );
