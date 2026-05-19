@@ -11,7 +11,7 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
   const userId = req.user._id;
 
-const canViewAll = await canUser(req.user, organization, "view_all_leads");
+  const canViewAll = await canUser(req.user, organization, "view_all_leads");
   const isAdmin = req.user.role === "admin";
   const isManager = req.user.role === "manager";
 
@@ -25,36 +25,67 @@ const canViewAll = await canUser(req.user, organization, "view_all_leads");
 
   const allowedIds = isManager ? [userId, ...subordinateIds] : [];
 
-const viewTeamOnly = await canUser(req.user, organization, "view_team_leads_only");
+  const viewTeamOnly = await canUser(
+    req.user,
+    organization,
+    "view_team_leads_only",
+  );
 
-  const statsFilter =
-    isAdmin
-      ? { organization }
-      : isManager && canViewAll
+  const statsFilter = isAdmin
+    ? { organization }
+    : isManager && canViewAll
       ? { organization }
       : isManager && viewTeamOnly
-      ? { organization, $or: [{ assignedTo: { $in: allowedIds } }, { coAssignees: { $in: allowedIds } }] }
-      : canViewAll
-      ? { organization }
-      : { organization, $or: [{ assignedTo: userId }, { coAssignees: userId }] };
+        ? {
+            organization,
+            $or: [
+              { assignedTo: { $in: allowedIds } },
+              { coAssignees: { $in: allowedIds } },
+            ],
+          }
+        : canViewAll
+          ? { organization }
+          : {
+              organization,
+              $or: [{ assignedTo: userId }, { coAssignees: userId }],
+            };
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
+  const exclusionStatuses = ["Success", "Closed"];
+
   const [
-    totalLeads, activeLeads, wonLeads, pipelineLeads,
-    pipelineValueResult, collectedResult,
+    totalLeads,
+    activeLeads,
+    wonLeads,
+    closedLeads,
+    pipelineValueResult,
+    collectedResult,
   ] = await Promise.all([
+    // Total Leads count
     Lead.countDocuments(statsFilter),
-    Lead.countDocuments({ ...statsFilter, isActive: true }),
+
+    // Active Leads = Total Leads - (Success + Closed)
+    Lead.countDocuments({
+      ...statsFilter,
+      status: { $nin: exclusionStatuses },
+    }),
+
+    // Won Leads = Exact "Success" status leads
     Lead.countDocuments({ ...statsFilter, status: "Success" }),
-    Lead.countDocuments({ ...statsFilter, status: { $nin: ["Success", "Closed"] } }),
+
+    // Closed Leads = Exact "Closed" status leads
+    Lead.countDocuments({ ...statsFilter, status: "Closed" }),
+
+    // Pipeline monetary value tracking for Active stages only
     Lead.aggregate([
-      { $match: { ...statsFilter, status: { $nin: ["Success", "Closed"] } } },
+      { $match: { ...statsFilter, status: { $nin: exclusionStatuses } } },
       { $group: { _id: null, total: { $sum: "$dealValue" } } },
     ]),
+
     Payment.aggregate([
       { $match: { organization } },
       { $group: { _id: null, total: { $sum: "$amount" } } },
@@ -63,36 +94,68 @@ const viewTeamOnly = await canUser(req.user, organization, "view_team_leads_only
 
   const [recentLeads, todayReminders, teamPerformance] = await Promise.all([
     Lead.find(statsFilter)
-      .sort({ createdAt: -1 }).limit(5).populate("assignedTo", "name").lean(),
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .populate("assignedTo", "name")
+      .lean(),
 
     Reminder.find({
-      organization, isDone: false,
+      organization,
+      isDone: false,
       reminderDate: { $gte: today, $lt: tomorrow },
       $or: [{ assignedTo: userId }, { notifyUsers: userId }],
-    }).populate("leadId", "name phone").sort({ reminderTime: 1 }).lean(),
+    })
+      .populate("leadId", "name phone")
+      .sort({ reminderTime: 1 })
+      .lean(),
 
-    // Team performance — canViewAll ho toh saari leads ka breakdown
     Lead.aggregate([
       { $match: statsFilter },
-      { $group: { _id: "$assignedTo", leadCount: { $sum: 1 }, totalDealValue: { $sum: { $ifNull: ["$dealValue", 0] } } } },
-      { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "user" } },
+      {
+        $group: {
+          _id: "$assignedTo",
+          leadCount: { $sum: 1 },
+          totalDealValue: { $sum: { $ifNull: ["$dealValue", 0] } },
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "_id",
+          as: "user",
+        },
+      },
       { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
-      { $project: { userId: "$_id", name: { $ifNull: ["$user.name", "Unassigned"] }, leadCount: 1, totalDealValue: 1 } },
+      {
+        $project: {
+          userId: "$_id",
+          name: { $ifNull: ["$user.name", "Unassigned"] },
+          leadCount: 1,
+          totalDealValue: 1,
+        },
+      },
       { $sort: { leadCount: -1, totalDealValue: -1 } },
       { $limit: 5 },
     ]),
   ]);
 
-  res.status(200).json(new ApiResponse(200, {
-    totalLeads,
-    activeLeads,
-    wonLeads,
-    pipelineLeads,
-    pipelineValue:    pipelineValueResult[0]?.total || 0,
-    collectedAmount:  collectedResult[0]?.total || 0,
-    todayRemindersCount: todayReminders.length,
-    todayReminders,
-    recentLeads,
-    teamPerformance,
-  }, "Dashboard overview fetched successfully"));
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        totalLeads,
+        activeLeads,
+        wonLeads,
+        closedLeads,
+        pipelineValue: pipelineValueResult[0]?.total || 0,
+        collectedAmount: collectedResult[0]?.total || 0,
+        todayRemindersCount: todayReminders.length,
+        todayReminders,
+        recentLeads,
+        teamPerformance,
+      },
+      "Dashboard overview fetched successfully",
+    ),
+  );
 });
