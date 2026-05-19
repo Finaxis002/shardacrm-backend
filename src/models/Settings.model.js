@@ -46,7 +46,14 @@ const settingsSchema = new mongoose.Schema(
       default: ["name", "phone", "source", "value", "status", "assign"],
     },
     customColumns: {
-      type: [{ key: String, label: String, visible: Boolean }],
+      type: [
+        {
+          key: { type: String },
+          label: { type: String },
+          visible: { type: Boolean, default: true },
+          formVisible: { type: Boolean, default: true },
+        },
+      ],
       default: [],
     },
 
@@ -56,11 +63,11 @@ const settingsSchema = new mongoose.Schema(
 
     // OAuth tokens stored securely in the DB (never sent to frontend)
     gcalTokens: {
-      access_token:  { type: String, default: "" },
+      access_token: { type: String, default: "" },
       refresh_token: { type: String, default: "" },
-      expiry_date:   { type: Number, default: 0 },
-      token_type:    { type: String, default: "" },
-      scope:         { type: String, default: "" },
+      expiry_date: { type: Number, default: 0 },
+      token_type: { type: String, default: "" },
+      scope: { type: String, default: "" },
     },
 
     gmailEnabled: { type: Boolean, default: false },
@@ -76,18 +83,18 @@ const settingsSchema = new mongoose.Schema(
       enum: ["openai", "anthropic", "gemini", "custom", ""],
       default: "",
     },
-    aiKey:         { type: String, default: "" },
-    aiModel:       { type: String, default: "" },
-    aiEndpoint:    { type: String, default: "" },
-    aiPrompt:      { type: String, default: "" },
+    aiKey: { type: String, default: "" },
+    aiModel: { type: String, default: "" },
+    aiEndpoint: { type: String, default: "" },
+    aiPrompt: { type: String, default: "" },
     aiAutoAnalyse: { type: Boolean, default: false },
-    aiScanNotes:   { type: Boolean, default: true },
-    aiIntent:      { type: Boolean, default: false },
+    aiScanNotes: { type: Boolean, default: true },
+    aiIntent: { type: Boolean, default: false },
 
     // General
     companyName: { type: String, default: "" },
-    currency:    { type: String, default: "₹" },
-    timezone:    { type: String, default: "Asia/Kolkata" },
+    currency: { type: String, default: "₹" },
+    timezone: { type: String, default: "Asia/Kolkata" },
   },
   { timestamps: true },
 );

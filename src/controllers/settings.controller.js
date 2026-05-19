@@ -161,7 +161,12 @@ const normalizeSettings = (settings) => {
     rbacCoEditorsCanEdit:
       obj.rbacCoEditorsCanEdit !== undefined ? obj.rbacCoEditorsCanEdit : true,
     leadColumns: obj.leadColumns || DEFAULT_LEAD_COLUMNS,
-    customColumns: obj.customColumns || [],
+    customColumns: (obj.customColumns || []).map((col) => ({
+      key: col.key,
+      label: col.label,
+      visible: col.visible !== undefined ? col.visible : true,
+      formVisible: col.formVisible !== undefined ? col.formVisible : true,
+    })),
     gcalConnected: obj.gcalConnected || false,
     gcalUser: obj.gcalUser || "",
     gmailEnabled: obj.gmailEnabled || false,
