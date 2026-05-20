@@ -5,6 +5,9 @@ export const createLeadValidator = Joi.object({
   phone: Joi.string()
     .required()
     .regex(/^\+?[1-9][0-9]{9,14}$/),
+  alternatePhone: Joi.string()
+    .regex(/^\+?[1-9][0-9]{9,14}$/)
+    .optional(),
   email: Joi.string().email().optional(),
   city: Joi.string().optional(),
   source: Joi.string().optional(),
@@ -71,6 +74,9 @@ export const createLeadValidator = Joi.object({
 export const updateLeadValidator = Joi.object({
   name: Joi.string().min(2).max(100),
   phone: Joi.string().regex(/^\+?[1-9][0-9]{9,14}$/),
+  alternatePhone: Joi.string()
+    .regex(/^\+?[1-9][0-9]{9,14}$/)
+    .optional(),
   email: Joi.string().email(),
   city: Joi.string(),
   source: Joi.string().optional(),

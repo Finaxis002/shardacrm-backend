@@ -12,6 +12,10 @@ const leadSchema = new mongoose.Schema(
       required: [true, "Phone is required"],
       sparse: true,
     },
+    alternatePhone: {
+      type: String,
+      default: "",
+    },
     email: {
       type: String,
       lowercase: true,
@@ -22,21 +26,21 @@ const leadSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-  source: {
-  type: String,
-  enum: [
-    "Google Ads",
-    "Website",
-    "Referral",
-    "Walk-in",
-    "Cold Call",
-    "Social Media",
-    "Google Sheet",
-    "Meta Ads",
-    "Other",
-  ],
-  default: "Other",
-},
+    source: {
+      type: String,
+      enum: [
+        "Google Ads",
+        "Website",
+        "Referral",
+        "Walk-in",
+        "Cold Call",
+        "Social Media",
+        "Google Sheet",
+        "Meta Ads",
+        "Other",
+      ],
+      default: "Other",
+    },
     status: {
       type: String,
       default: "New",
@@ -101,26 +105,26 @@ const leadSchema = new mongoose.Schema(
       default: "",
     },
     metaAdId: {
-  type: String,
-  default: "",
-},
-metaFormId: {
-  type: String,
-  default: "",
-},
-metaAdName: {
-  type: String,
-  default: "",
-},
+      type: String,
+      default: "",
+    },
+    metaFormId: {
+      type: String,
+      default: "",
+    },
+    metaAdName: {
+      type: String,
+      default: "",
+    },
     isDuplicate: {
       type: Boolean,
       default: false,
     },
     managerId: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "User",
-  default: null,
-},
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
   },
   { timestamps: true },
 );

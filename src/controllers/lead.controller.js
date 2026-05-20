@@ -100,6 +100,7 @@ export const getLeads = asyncHandler(async (req, res) => {
         { name: { $regex: search, $options: "i" } },
         { email: { $regex: search, $options: "i" } },
         { phone: { $regex: search, $options: "i" } },
+        { alternatePhone: { $regex: search, $options: "i" } },
       ],
     });
   }
@@ -444,6 +445,7 @@ export const createLead = asyncHandler(async (req, res) => {
   const {
     name,
     phone,
+    alternatePhone,
     email,
     city,
     source,
@@ -491,7 +493,10 @@ export const createLead = asyncHandler(async (req, res) => {
   }
 
   // Check if lead with same phone already exists in organization
-  const existingLead = await Lead.findOne({ phone, organization });
+  const existingLead = await Lead.findOne({
+    $or: [{ phone }, { alternatePhone }],
+    organization,
+  });
   if (existingLead) {
     throw new ApiError(400, "Lead with this phone number already exists");
   }
@@ -512,6 +517,7 @@ export const createLead = asyncHandler(async (req, res) => {
   const lead = new Lead({
     name,
     phone,
+    alternatePhone,
     email,
     city,
     source: source || "Other",
@@ -706,9 +712,11 @@ export const updateLead = asyncHandler(async (req, res) => {
   if (req.body.note !== undefined) {
     lead.initialNote = req.body.note;
   }
+
   const allowedFields = [
     "name",
     "phone",
+    "alternatePhone",
     "email",
     "city",
     "source",
@@ -1593,6 +1601,7 @@ export const getLeadIds = asyncHandler(async (req, res) => {
         { name: { $regex: search, $options: "i" } },
         { email: { $regex: search, $options: "i" } },
         { phone: { $regex: search, $options: "i" } },
+        { alternatePhone: { $regex: search, $options: "i" } },
       ],
     };
     if (accessFilter) {
