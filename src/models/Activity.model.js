@@ -16,6 +16,7 @@ const activitySchema = new mongoose.Schema(
         "Meeting",
         "Recording",
         "Task",
+        "Payment",
         "Status Change",
         "Lead Reassignment",
       ],
@@ -35,6 +36,13 @@ const activitySchema = new mongoose.Schema(
       ref: "Organization",
       required: true,
     },
+
+    // For Payments
+    paymentAmount: Number,
+    paymentMode: String,
+    paymentStatus: String,
+    paymentReference: String,
+    paymentDate: Date,
 
     // For Calls
     callDuration: String,
