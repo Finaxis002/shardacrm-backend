@@ -23,6 +23,10 @@ import eventRouter from "./routes/event.routes.js";
 import integrationRoutes from "./routes/Integration.routes.js";
 import logoutOtpRoutes from "./routes/Logoutotp.route.js";
 import metaWebhookRoutes from "./routes/metaWebhook.routes.js";
+import { fileURLToPath } from "url";
+import path from "path";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const app = express();
 
 // Security middleware
@@ -73,6 +77,10 @@ app.use("/api/v1/google-sheets", googleSheetsRoutes);
 app.use("/api/v1/events", eventRouter);
 app.use("/api/v1/integrations", integrationRoutes);
 app.use("/api/v1/auth", logoutOtpRoutes);
+app.use("/uploads/recordings", (req, res, next) => {
+  res.header("Cross-Origin-Resource-Policy", "cross-origin");
+  next();
+}, express.static(path.join(process.cwd(), "uploads", "recordings")));
 // New Live Test Route
 app.get("/api/v1/test-live", (req, res) => {
   res.status(200).json({

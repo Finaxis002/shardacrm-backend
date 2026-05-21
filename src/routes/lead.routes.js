@@ -1,5 +1,10 @@
 import { Router } from "express";
 import {
+  uploadRecordingMiddleware,
+  uploadRecordingFile,
+  deleteRecording,
+} from "../controllers/recording.upload.controller.js";
+import {
   getLeads,
   getLead,
   createLead,
@@ -38,7 +43,8 @@ router.get("/", validateRequest(searchLeadsValidator, "query"), getLeads);
 router.get("/stats/overview", getLeadStats);
 
 router.get("/:id", getLead);
-
+router.post("/:id/recordings/upload", uploadRecordingMiddleware, uploadRecordingFile);
+router.delete("/:id/recordings/:filename", deleteRecording);
 // POST routes
 router.post(
   "/",

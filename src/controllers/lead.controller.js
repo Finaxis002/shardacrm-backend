@@ -493,10 +493,15 @@ export const createLead = asyncHandler(async (req, res) => {
   }
 
   // Check if lead with same phone already exists in organization
-  const existingLead = await Lead.findOne({
-    $or: [{ phone }, { alternatePhone }],
-    organization,
-  });
+ const existingLead = await Lead.findOne({
+  organization,
+  $or: [
+    { phone: phone },
+    ...(alternatePhone
+      ? [{ alternatePhone: alternatePhone }]
+      : []),
+  ],
+});
   if (existingLead) {
     throw new ApiError(400, "Lead with this phone number already exists");
   }
