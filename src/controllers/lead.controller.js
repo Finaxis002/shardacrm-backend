@@ -510,9 +510,7 @@ export const createLead = asyncHandler(async (req, res) => {
     organization,
     $or: [
       { phone: phone },
-    ...(alternatePhone
-      ? [{ alternatePhone: alternatePhone }]
-      : []),
+      ...(alternatePhone ? [{ alternatePhone: alternatePhone }] : []),
     ],
   });
   if (existingLead) {
@@ -643,6 +641,20 @@ export const createLead = asyncHandler(async (req, res) => {
       organization,
     });
     activityPromises.push(paymentItem.save());
+    activityPromises.push(
+      Activity.create({
+        leadId: lead._id,
+        type: "Payment",
+        text: `Payment recorded: ₹${payment.amount}${payment.reference ? ` (${payment.reference})` : ""}`,
+        paymentAmount: payment.amount,
+        paymentMode: payment.paymentMode,
+        paymentStatus: payment.status || "Paid",
+        paymentReference: payment.reference,
+        paymentDate: payment.paymentDate || new Date(),
+        createdBy: req.user._id,
+        organization,
+      }),
+    );
   }
 
   if (reminder && reminder.reminderDate) {
@@ -1050,7 +1062,37 @@ export const updateLead = asyncHandler(async (req, res) => {
       createdAt: -1,
     });
 
+    const paymentActivityText = `Payment ${existingPayment ? "updated" : "recorded"}: ₹${paymentPayload.amount}${paymentPayload.reference ? ` (${paymentPayload.reference})` : ""}`;
+    const createPaymentActivity = async () => {
+      await Activity.create({
+        leadId: lead._id,
+        type: "Payment",
+        text: paymentActivityText,
+        paymentAmount: paymentPayload.amount,
+        paymentMode: paymentPayload.paymentMode,
+        paymentStatus: paymentPayload.status,
+        paymentReference: paymentPayload.reference,
+        paymentDate: paymentPayload.paymentDate,
+        createdBy: userId,
+        organization,
+      });
+    };
+
     if (existingPayment) {
+      const previousPaymentDate = existingPayment.paymentDate
+        ? existingPayment.paymentDate.toISOString()
+        : "";
+      const incomingPaymentDate = paymentPayload.paymentDate
+        ? paymentPayload.paymentDate.toISOString()
+        : "";
+      const paymentChanged =
+        existingPayment.amount !== paymentPayload.amount ||
+        existingPayment.paymentMode !== paymentPayload.paymentMode ||
+        existingPayment.status !== paymentPayload.status ||
+        (existingPayment.reference || "") !==
+          (paymentPayload.reference || "") ||
+        previousPaymentDate !== incomingPaymentDate;
+
       existingPayment.amount = paymentPayload.amount;
       existingPayment.paymentMode = paymentPayload.paymentMode;
       existingPayment.status = paymentPayload.status;
@@ -1058,8 +1100,13 @@ export const updateLead = asyncHandler(async (req, res) => {
       existingPayment.paymentDate = paymentPayload.paymentDate;
       existingPayment.recordedBy = userId;
       await existingPayment.save();
+
+      if (paymentChanged) {
+        await createPaymentActivity();
+      }
     } else {
       await Payment.create(paymentPayload);
+      await createPaymentActivity();
     }
   }
 
