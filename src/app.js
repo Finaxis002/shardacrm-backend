@@ -80,7 +80,7 @@ app.use("/api/v1/auth", logoutOtpRoutes);
 app.use("/uploads/recordings", (req, res, next) => {
   res.header("Cross-Origin-Resource-Policy", "cross-origin");
   next();
-}, express.static(path.join(process.cwd(), "uploads", "recordings")));
+}, express.static(path.join(process.cwd(), "src", "uploads", "recordings")));
 // New Live Test Route
 app.get("/api/v1/test-live", (req, res) => {
   res.status(200).json({
