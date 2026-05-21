@@ -30,16 +30,29 @@ export const getLeads = asyncHandler(async (req, res) => {
   const queryConditions = [{ organization }];
 
   if (status) {
-    const statuses = String(status)
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-    if (statuses.length === 1) {
-      queryConditions.push({ status: statuses[0] });
-    } else if (statuses.length > 1) {
-      queryConditions.push({ status: { $in: statuses } });
+    const statusParam = String(status).trim();
+
+    if (statusParam === "active") {
+      const exclusionStatuses = ["Success", "Closed"];
+      queryConditions.push({
+        status: { $nin: exclusionStatuses },
+      });
+    } else if (statusParam.includes(",")) {
+      const statuses = statusParam
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      if (statuses.length === 1) {
+        queryConditions.push({ status: statuses[0] });
+      } else if (statuses.length > 1) {
+        queryConditions.push({ status: { $in: statuses } });
+      }
+    } else {
+      queryConditions.push({ status: statusParam });
     }
   }
+
   if (source) queryConditions.push({ source });
 
   let accessFilter = null;
@@ -493,15 +506,15 @@ export const createLead = asyncHandler(async (req, res) => {
   }
 
   // Check if lead with same phone already exists in organization
- const existingLead = await Lead.findOne({
-  organization,
-  $or: [
-    { phone: phone },
+  const existingLead = await Lead.findOne({
+    organization,
+    $or: [
+      { phone: phone },
     ...(alternatePhone
       ? [{ alternatePhone: alternatePhone }]
       : []),
-  ],
-});
+    ],
+  });
   if (existingLead) {
     throw new ApiError(400, "Lead with this phone number already exists");
   }
@@ -1590,7 +1603,14 @@ export const getLeadIds = asyncHandler(async (req, res) => {
     isAdmin || (await canUser(req.user, organization, "view_all_leads"));
 
   const filter = { organization };
-  if (status) filter.status = status;
+  if (status) {
+    const statusParam = String(status).trim();
+    if (statusParam === "active") {
+      filter.status = { $nin: ["Success", "Closed"] };
+    } else {
+      filter.status = statusParam;
+    }
+  }
   if (source) filter.source = source;
 
   let accessFilter = null;
