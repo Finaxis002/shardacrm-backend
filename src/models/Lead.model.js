@@ -81,6 +81,22 @@ const leadSchema = new mongoose.Schema(
       label: { type: String, default: "" },
       url: { type: String, default: "" },
     },
+    recordings: [
+  {
+    label: { type: String, default: "" },
+    url: { type: String, default: "" },
+    filename: { type: String, default: "" },
+    originalName: { type: String, default: "" },
+    mimeType: { type: String, default: "" },
+    size: { type: Number, default: 0 },
+    uploadedAt: { type: Date, default: Date.now },
+    uploadedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+  },
+],
     customFields: {
       type: Map,
       of: String,
