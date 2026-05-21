@@ -1,15 +1,20 @@
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "url";
 import asyncHandler from "../utils/asyncHandler.js";
 import ApiResponse from "../utils/apiResponse.js";
 import ApiError from "../utils/apiError.js";
 import Lead from "../models/Lead.model.js";
 import Activity from "../models/Activity.model.js";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = path.join(process.cwd(), "uploads", "recordings");
+    const uploadDir = path.join(__dirname, "..", "uploads", "recordings");
+    console.log("Upload dir:", uploadDir);
     if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
     cb(null, uploadDir);
   },
@@ -78,10 +83,14 @@ export const deleteRecording = asyncHandler(async (req, res) => {
   const lead = await Lead.findOne({ _id: id, organization });
   if (!lead) throw new ApiError(404, "Lead not found");
 
-  lead.recordings = (lead.recordings || []).filter((r) => r.filename !== filename);
-  const filePath = path.join(process.cwd(), "uploads", "recordings", filename);
+  await Lead.findByIdAndUpdate(
+    lead._id,
+    { $pull: { recordings: { filename } } },
+    { new: true }
+  );
+
+  const filePath = path.join(__dirname, "uploads", "recordings", filename);
   fs.unlink(filePath, () => {});
-  await lead.save();
 
   res.status(200).json(new ApiResponse(200, null, "Recording deleted"));
 });
