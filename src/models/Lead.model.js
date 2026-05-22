@@ -82,21 +82,21 @@ const leadSchema = new mongoose.Schema(
       url: { type: String, default: "" },
     },
     recordings: [
-  {
-    label: { type: String, default: "" },
-    url: { type: String, default: "" },
-    filename: { type: String, default: "" },
-    originalName: { type: String, default: "" },
-    mimeType: { type: String, default: "" },
-    size: { type: Number, default: 0 },
-    uploadedAt: { type: Date, default: Date.now },
-    uploadedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-    },
-  },
-],
+      {
+        label: { type: String, default: "" },
+        url: { type: String, default: "" },
+        filename: { type: String, default: "" },
+        originalName: { type: String, default: "" },
+        mimeType: { type: String, default: "" },
+        size: { type: Number, default: 0 },
+        uploadedAt: { type: Date, default: Date.now },
+        uploadedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+      },
+    ],
     customFields: {
       type: Map,
       of: String,
@@ -149,6 +149,10 @@ const leadSchema = new mongoose.Schema(
 leadSchema.index({ organization: 1, assignedTo: 1 });
 leadSchema.index({ organization: 1, status: 1 });
 leadSchema.index({ organization: 1, createdAt: -1 });
+leadSchema.index({ organization: 1, priority: 1, createdAt: -1 });
+leadSchema.index({ organization: 1, closeDate: -1 });
+leadSchema.index({ organization: 1, createdAt: -1, priority: 1 });
+leadSchema.index({ organization: 1, status: 1, priority: 1 });
 
 const Lead = mongoose.model("Lead", leadSchema);
 export default Lead;

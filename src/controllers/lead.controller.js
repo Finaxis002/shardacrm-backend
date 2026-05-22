@@ -20,7 +20,19 @@ import { createNotifications } from "../utils/notification.utils.js";
  * @access Private
  */
 export const getLeads = asyncHandler(async (req, res) => {
-  const { page, limit, status, source, assignedTo, search } = req.query;
+  const {
+    page,
+    limit,
+    status,
+    source,
+    assignedTo,
+    search,
+    priority,
+    dateFrom,
+    dateTo,
+    dateFilterType,
+  } = req.query;
+
   const userId = req.user._id;
   const organization = req.user.organization;
   const isAdmin = req.user.role === "admin";
@@ -29,6 +41,7 @@ export const getLeads = asyncHandler(async (req, res) => {
 
   const queryConditions = [{ organization }];
 
+  // Status Filter
   if (status) {
     const statusParam = String(status).trim();
 
@@ -53,8 +66,35 @@ export const getLeads = asyncHandler(async (req, res) => {
     }
   }
 
+  // Source Filter
   if (source) queryConditions.push({ source });
 
+  // Priority Filter
+  if (priority) {
+    queryConditions.push({ priority });
+  }
+
+  // Date Range Filter
+  if (dateFrom || dateTo) {
+    const dateField =
+      dateFilterType === "closeDate" ? "closeDate" : "createdAt";
+    const dateFilter = {};
+
+    if (dateFrom) {
+      dateFilter.$gte = new Date(dateFrom);
+    }
+    if (dateTo) {
+      const endDate = new Date(dateTo);
+      endDate.setHours(23, 59, 59, 999);
+      dateFilter.$lte = endDate;
+    }
+
+    if (Object.keys(dateFilter).length > 0) {
+      queryConditions.push({ [dateField]: dateFilter });
+    }
+  }
+
+  // Access Control
   let accessFilter = null;
   const viewTeamOnly = await canUser(
     req.user,
@@ -185,7 +225,7 @@ export const getLeads = asyncHandler(async (req, res) => {
         ],
       },
     },
-  ]);
+  ]).allowDiskUse(true);
 
   const leads = aggregationResult[0]?.data || [];
   const total = aggregationResult[0]?.metadata[0]?.total || 0;
@@ -235,6 +275,7 @@ export const getLead = asyncHandler(async (req, res) => {
       throw new ApiError(403, "You are not authorized to view this lead");
     }
   }
+
   const activities = await Activity.find({ leadId: lead._id })
     .sort({ createdAt: -1 })
     .lean();
@@ -699,11 +740,7 @@ export const createLead = asyncHandler(async (req, res) => {
   const results = await Promise.allSettled(activityPromises);
   results.forEach((r, i) => {
     if (r.status === "rejected") {
-      // console.error(`❌ Promise[${i}] failed:`, r.reason);
-      // console.error(`❌ Error message:`, r.reason?.message);
-      // console.error(`❌ Error stack:`, r.reason?.stack);
-    } else {
-      // console.log(`✅ Promise[${i}] success:`, r.value?._id || "ok");
+      // Error handling optional
     }
   });
 
@@ -1543,6 +1580,11 @@ export const getLeadStats = asyncHandler(async (req, res) => {
   );
 });
 
+/**
+ * Bulk delete leads
+ * @route DELETE /api/v1/leads/bulk
+ * @access Private
+ */
 export const bulkDeleteLeads = asyncHandler(async (req, res) => {
   const { ids } = req.body;
   const organization = req.user.organization;
@@ -1641,8 +1683,23 @@ export const bulkAssignLeads = asyncHandler(async (req, res) => {
     );
 });
 
+/**
+ * Get lead IDs for bulk operations with filters
+ * @route GET /api/v1/leads/ids
+ * @access Private
+ */
 export const getLeadIds = asyncHandler(async (req, res) => {
-  const { status, source, assignedTo, search } = req.query;
+  const {
+    status,
+    source,
+    assignedTo,
+    search,
+    priority, 
+    dateFrom, 
+    dateTo,
+    dateFilterType,
+  } = req.query;
+
   const userId = req.user._id;
   const organization = req.user.organization;
   const isAdmin = req.user.role === "admin";
@@ -1650,6 +1707,8 @@ export const getLeadIds = asyncHandler(async (req, res) => {
     isAdmin || (await canUser(req.user, organization, "view_all_leads"));
 
   const filter = { organization };
+
+  // Status Filter
   if (status) {
     const statusParam = String(status).trim();
     if (statusParam === "active") {
@@ -1658,8 +1717,34 @@ export const getLeadIds = asyncHandler(async (req, res) => {
       filter.status = statusParam;
     }
   }
+
+  // Source Filter
   if (source) filter.source = source;
 
+  // Priority Filter
+  if (priority) filter.priority = priority;
+
+  // Date Filter
+  if (dateFrom || dateTo) {
+    const dateField =
+      dateFilterType === "closeDate" ? "closeDate" : "createdAt";
+    const dateFilter = {};
+
+    if (dateFrom) {
+      dateFilter.$gte = new Date(dateFrom);
+    }
+    if (dateTo) {
+      const endDate = new Date(dateTo);
+      endDate.setHours(23, 59, 59, 999);
+      dateFilter.$lte = endDate;
+    }
+
+    if (Object.keys(dateFilter).length > 0) {
+      filter[dateField] = dateFilter;
+    }
+  }
+
+  // Access Control
   let accessFilter = null;
   if (canViewAllLeads) {
     if (assignedTo) filter.assignedTo = assignedTo;
@@ -1667,6 +1752,7 @@ export const getLeadIds = asyncHandler(async (req, res) => {
     accessFilter = { $or: [{ assignedTo: userId }, { coAssignees: userId }] };
   }
 
+  // Search Filter
   if (search) {
     const searchFilter = {
       $or: [
