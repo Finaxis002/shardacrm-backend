@@ -89,7 +89,7 @@ export const deleteRecording = asyncHandler(async (req, res) => {
     { new: true }
   );
 
-  const filePath = path.join(__dirname, "uploads", "recordings", filename);
+ const filePath = path.join(__dirname, "..", "uploads", "recordings", filename);
   fs.unlink(filePath, () => {});
 
   res.status(200).json(new ApiResponse(200, null, "Recording deleted"));
