@@ -30,6 +30,8 @@ const notificationSchema = new mongoose.Schema(
         "reminder",
         "mention",
         "system",
+        "lead_created",
+        "lead_assigned",
         "lead_updated",
         "lead_deleted",
         "lead_reassigned",
