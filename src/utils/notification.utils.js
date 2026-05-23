@@ -143,13 +143,20 @@ export const createNotifications = async ({
   message,
   type = "system",
   actionUrl,
-  excludeSender = true,
+  excludeSender = false,
+  includeSender = false,
 }) => {
-  const normalizedIds = normalizeRecipientIds(
-    recipientIds,
-    senderId,
-    excludeSender,
-  );
+  const ids = Array.isArray(recipientIds)
+    ? [...recipientIds]
+    : recipientIds
+      ? [recipientIds]
+      : [];
+
+  if (includeSender && senderId) {
+    ids.push(senderId);
+  }
+
+  const normalizedIds = normalizeRecipientIds(ids, senderId, excludeSender);
 
   if (!normalizedIds.length) {
     return [];

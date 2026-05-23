@@ -338,9 +338,7 @@ const buildLeadNotificationRecipients = (
     recipientIds.push(extractId(oldAssigneeId));
   }
 
-  return Array.from(new Set(recipientIds.filter(Boolean))).filter(
-    (id) => extractId(id) !== extractId(senderId),
-  );
+  return Array.from(new Set(recipientIds.filter(Boolean)));
 };
 
 const buildReminderNotificationRecipients = (reminder) => {
@@ -600,6 +598,22 @@ export const createLead = asyncHandler(async (req, res) => {
   await lead.save();
   await lead.populate("assignedTo", "name email");
 
+  const leadCreateRecipients = buildLeadNotificationRecipients(lead);
+  if (leadCreateRecipients.length) {
+    await createNotifications({
+      recipientIds: leadCreateRecipients,
+      senderId: createdBy,
+      organization,
+      leadId: lead._id,
+      title: `Lead created: ${lead.name}`,
+      message: `${req.user.name} created a new lead ${lead.name}.`,
+      type: "lead_created",
+      actionUrl: `/leads/${lead._id}`,
+      includeSender: true,
+      excludeSender: false,
+    });
+  }
+
   const activityPromises = [];
   if (note) {
     activityPromises.push(
@@ -723,6 +737,7 @@ export const createLead = asyncHandler(async (req, res) => {
         message: `${req.user.name} created a ${reminderItem.type || "Follow-up"} reminder for lead ${lead.name} on ${formatReminderDateTime(reminderItem)}.`,
         type: "reminder",
         actionUrl: `/leads/${lead._id}`,
+        includeSender: true,
       });
     }
 
@@ -916,6 +931,7 @@ export const updateLead = asyncHandler(async (req, res) => {
         message: `${req.user.name} reassigned lead ${lead.name} from ${previousName} to ${newUser?.name || "Unknown"}.`,
         type: "lead_reassigned",
         actionUrl: `/leads/${lead._id}`,
+        includeSender: true,
       });
     }
   } else {
@@ -937,6 +953,7 @@ export const updateLead = asyncHandler(async (req, res) => {
           message: `${req.user.name} updated lead ${lead.name}.`,
           type: "lead_updated",
           actionUrl: `/leads/${lead._id}`,
+          includeSender: true,
         });
       }
     }
@@ -1181,6 +1198,7 @@ export const updateLead = asyncHandler(async (req, res) => {
             message: `${req.user.name} updated the ${existingReminder.type || "Follow-up"} reminder for lead ${lead.name} to ${formatReminderDateTime(existingReminder)}.`,
             type: "reminder",
             actionUrl: `/leads/${lead._id}`,
+            includeSender: true,
           });
         }
 
@@ -1226,6 +1244,7 @@ export const updateLead = asyncHandler(async (req, res) => {
           message: `${req.user.name} created a ${newReminder.type || "Follow-up"} reminder for lead ${lead.name} on ${formatReminderDateTime(newReminder)}.`,
           type: "reminder",
           actionUrl: `/leads/${lead._id}`,
+          includeSender: true,
         });
       }
 
@@ -1275,6 +1294,7 @@ export const deleteLead = asyncHandler(async (req, res) => {
       message: `${req.user.name} deleted lead ${lead.name}.`,
       type: "lead_deleted",
       actionUrl: `/leads/${lead._id}`,
+      includeSender: true,
     });
   }
 
@@ -1367,6 +1387,7 @@ export const updateLeadStatus = asyncHandler(async (req, res) => {
       message: `${req.user.name} changed status from ${oldStatus} to ${status} for lead ${lead.name}.`,
       type: "lead_status_changed",
       actionUrl: `/leads/${lead._id}`,
+      includeSender: true,
     });
   }
 
@@ -1435,6 +1456,7 @@ export const assignLead = asyncHandler(async (req, res) => {
         message: `${req.user.name} reassigned lead ${lead.name} from ${previousName} to ${user.name}.`,
         type: "lead_reassigned",
         actionUrl: `/leads/${lead._id}`,
+        includeSender: true,
       });
     }
   }
@@ -1498,6 +1520,7 @@ export const addCoAssignee = asyncHandler(async (req, res) => {
       message: `${req.user.name} added ${user.name} as a co-assignee for lead ${lead.name}.`,
       type: "lead_co_assignee_added",
       actionUrl: `/leads/${lead._id}`,
+      includeSender: true,
     });
   }
 
@@ -1694,8 +1717,8 @@ export const getLeadIds = asyncHandler(async (req, res) => {
     source,
     assignedTo,
     search,
-    priority, 
-    dateFrom, 
+    priority,
+    dateFrom,
     dateTo,
     dateFilterType,
   } = req.query;
