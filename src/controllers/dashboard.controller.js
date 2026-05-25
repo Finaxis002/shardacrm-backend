@@ -31,6 +31,7 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
     "view_team_leads_only",
   );
 
+  // Filter for VISIBILITY (Includes Co-Assignees) - Used for lists and counts
   const statsFilter = isAdmin
     ? { organization }
     : isManager && canViewAll
@@ -50,12 +51,35 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
               $or: [{ assignedTo: userId }, { coAssignees: userId }],
             };
 
+  // Filter for ATTRIBUTION (Strictly Primary Owner) - Used for monetary stats
+  const attributionFilter = isAdmin
+    ? { organization }
+    : isManager && canViewAll
+      ? { organization }
+      : isManager && viewTeamOnly
+        ? {
+            organization,
+            assignedTo: { $in: allowedIds },
+          }
+        : canViewAll
+          ? { organization }
+          : {
+              organization,
+              assignedTo: userId,
+            };
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
   const exclusionStatuses = ["Success", "Closed"];
+
+  // Fetch ONLY owned lead IDs for strict payment attribution
+  const attributionLeads = await Lead.find(attributionFilter)
+    .select("_id")
+    .lean();
+  const attributionLeadIds = attributionLeads.map((l) => l._id);
 
   const [
     totalLeads,
@@ -65,29 +89,31 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
     pipelineValueResult,
     collectedResult,
   ] = await Promise.all([
-    // Total Leads count
+    // Counts use the general visibility filter
     Lead.countDocuments(statsFilter),
 
-    // Active Leads = Total Leads - (Success + Closed)
     Lead.countDocuments({
       ...statsFilter,
       status: { $nin: exclusionStatuses },
     }),
 
-    // Won Leads = Exact "Success" status leads
     Lead.countDocuments({ ...statsFilter, status: "Success" }),
 
-    // Closed Leads = Exact "Closed" status leads
     Lead.countDocuments({ ...statsFilter, status: "Closed" }),
 
-    // Pipeline monetary value tracking for Active stages only
+    // Monetary values use the strict attribution filter to avoid duplicate counting
     Lead.aggregate([
-      { $match: { ...statsFilter, status: { $nin: exclusionStatuses } } },
+      { $match: { ...attributionFilter, status: { $nin: exclusionStatuses } } },
       { $group: { _id: null, total: { $sum: "$dealValue" } } },
     ]),
 
     Payment.aggregate([
-      { $match: { organization } },
+      {
+        $match: {
+          organization,
+          leadId: { $in: attributionLeadIds },
+        },
+      },
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]),
   ]);
