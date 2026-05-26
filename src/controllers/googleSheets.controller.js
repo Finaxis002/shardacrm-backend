@@ -112,7 +112,8 @@ const fetchSheetRows = async (
 
     return response.data.values || [];
   } catch (err) {
-    throw new ApiError(400, `Google Sheets API error: ${err.message}`);
+    
+    throw new ApiError(400, `Sheet read failed. Check service account permissions: ${err.message}`);
   }
 };
 
@@ -158,39 +159,36 @@ const rowToLead = (row, fieldMappings, fixedValues = []) => {
 const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organization, createdBy, assignedTo, syncId, sheetName }) => {
   console.log("Total rows to process:", rows.length);
   console.log("Sample row:", rows[0]);
-    console.log("💥 saveLeadsFromRows sheetName received:", sheetName);
+  console.log("💥 saveLeadsFromRows sheetName received:", sheetName);
 
   // Distribution rule dhundho
   let distributionRule = null;
-  let activeRuleInfo = null;
   if (syncId) {
     distributionRule = await findRuleForSheet(syncId, organization);
     if (distributionRule) {
-      activeRuleInfo = {
+      console.log("Distribution rule matched:", {
         ruleId: String(distributionRule._id),
         ruleType: distributionRule.rule,
-        sheetSyncIds:
-          distributionRule.sheetSyncIds?.map((id) => String(id)) || [],
-        userPool: distributionRule.userPool?.map((id) => String(id)) || [],
-      };
-      console.log("Distribution rule matched:", activeRuleInfo);
+      });
     } else {
       console.log("No active distribution rule found for syncId:", syncId);
     }
   }
 
-let imported = 0;
+  let imported = 0;
   let skipped = 0;
+
   const processedPhones = new Set();
   const processedEmails = new Set();
+  const processedPhoneOwner = new Map(); // within-batch phone → owner
+  const processedEmailOwner = new Map(); // within-batch email → owner
+
   for (const row of rows) {
     const leadData = rowToLead(row, fieldMappings, fixedValues);
 
     // Phone clean - sirf last 10 digits lo
     if (leadData.phone) {
-      leadData.phone = String(leadData.phone)
-        .replace(/\D/g, "")
-        .slice(-10);
+      leadData.phone = String(leadData.phone).replace(/\D/g, "").slice(-10);
     }
 
     if (!leadData.name?.trim() || !leadData.phone?.trim()) {
@@ -200,72 +198,82 @@ let imported = 0;
 
     const phoneClean = String(leadData.phone).trim();
 
-    // Step 1: Within-batch duplicate check
-   // Step 1: Within-batch duplicate check
-  // Step 1: Within-batch duplicate check (phone ya email)
+    // Email validate karo
     const emailRawCheck = String(leadData.email || "").trim().toLowerCase();
     const emailRegex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
-    const validEmailCheck = emailRawCheck && emailRegex.test(emailRawCheck) ? emailRawCheck : null;
+    const validEmailCheck =
+      emailRawCheck && emailRegex.test(emailRawCheck) ? emailRawCheck : null;
 
- // Step 1: Within-batch duplicate check
-    const isWithinBatchDup = processedPhones.has(phoneClean) || 
-      (validEmailCheck && processedEmails.has(validEmailCheck));
-    
-    if (!isWithinBatchDup) {
-      processedPhones.add(phoneClean);
-      if (validEmailCheck) processedEmails.add(validEmailCheck);
+    // ── Step 1 & 2: Duplicate check (within-batch + DB) ──────────────────
+    let isRepeat = false;
+    let existingLeadOwner = null;
+
+    // Within-batch duplicate check
+    if (processedPhones.has(phoneClean)) {
+      isRepeat = true;
+      existingLeadOwner = processedPhoneOwner.get(phoneClean) || null;
+    } else if (validEmailCheck && processedEmails.has(validEmailCheck)) {
+      isRepeat = true;
+      existingLeadOwner = processedEmailOwner.get(validEmailCheck) || null;
     }
 
-
-// Step 2: DB duplicate check (phone ya email)
-    let isRepeat = isWithinBatchDup;
+    // DB duplicate check 
     if (!isRepeat) {
       const dbQuery = { organization, $or: [{ phone: phoneClean }] };
       if (validEmailCheck) dbQuery.$or.push({ email: validEmailCheck });
-      const existing = await Lead.findOne(dbQuery);
-      isRepeat = !!existing;
-    }
-
-    
-
-    // Step 3: Assignee decide karo (sirf naye lead ke liye)
-    let finalAssignee = assignedTo || createdBy;
-    let assignmentSource = "default";
-    let assignedRule = null;
-
-    if (distributionRule && distributionRule.rule !== "manual") {
-      const nextUser = await getNextAssignee(distributionRule);
-      if (nextUser) {
-        finalAssignee = nextUser;
-        assignmentSource = "rule";
-        assignedRule = distributionRule.rule;
+      const existing = await Lead.findOne(dbQuery).select("assignedTo").lean();
+      if (existing) {
+        isRepeat = true;
+        existingLeadOwner = existing.assignedTo || null;
       }
     }
 
-    const emailRaw = validEmailCheck || "";
-    const validEmail = validEmailCheck || undefined;
+    // Track karo (chahe repeat ho ya new)
+    processedPhones.add(phoneClean);
+    if (validEmailCheck) processedEmails.add(validEmailCheck);
+
+    // ── Step 3: Assignee decide  ─────────────────────────────────────
+    let finalAssignee = assignedTo || createdBy;
+
+    if (isRepeat && existingLeadOwner) {
+  finalAssignee = existingLeadOwner.toString(); // ← toString() add 
+}else if (!isRepeat && distributionRule && distributionRule.rule !== "manual") {
+      // Naya lead → distribution rule apply 
+      const nextUser = await getNextAssignee(distributionRule);
+      if (nextUser) {
+        finalAssignee = nextUser;
+      }
+    }
+
+
     const sourceRaw = String(leadData.source || "").trim();
 
-const lead = new Lead({
-  name:       String(leadData.name).trim(),
-  phone:      phoneClean,
-  email:      validEmail,
-  city:       leadData.city || "",
-  source:     VALID_SOURCES.includes(sourceRaw) ? sourceRaw : "Google Sheet",
-  status:     isRepeat ? "Repeat" : "New",
-  dealValue:  Number(leadData.dealValue) || 0,
-  product:    leadData.product || "",
-  priority:   normalizePriority(leadData.priority),
-  closeDate:  parseDate(leadData.closeDate),
-  assignedTo: finalAssignee,
-  organization,
-  createdBy,
-  isDuplicate: isRepeat,
-  sheetName:  sheetName || "",
-  customFields: leadData.customFields || {},
-});
+    const lead = new Lead({
+      name: String(leadData.name).trim(),
+      phone: phoneClean,
+      email: validEmailCheck || undefined,
+      city: leadData.city || "",
+      source: VALID_SOURCES.includes(sourceRaw) ? sourceRaw : "Google Sheet",
+      status: isRepeat ? "Repeat" : "New",
+      dealValue: Number(leadData.dealValue) || 0,
+      product: leadData.product || "",
+      priority: normalizePriority(leadData.priority),
+      closeDate: parseDate(leadData.closeDate),
+      assignedTo: finalAssignee,
+      organization,
+      createdBy,
+      isDuplicate: isRepeat,
+      sheetName: sheetName || "",
+      customFields: leadData.customFields || {},
+    });
 
     await lead.save();
+
+
+    if (!isRepeat) {
+  processedPhoneOwner.set(phoneClean, lead.assignedTo.toString());
+  if (validEmailCheck) processedEmailOwner.set(validEmailCheck, lead.assignedTo.toString());
+}
 
     await Activity.create({
       leadId: lead._id,
@@ -583,8 +591,8 @@ export const syncNewRows = async (sync) => {
 
     const { imported, skipped } = await saveLeadsFromRows({
   rows,
-  fieldMappings: sync.fieldMappings,   // ← ye wala rehne do, change mat karo
-  fixedValues: sync.fixedValues,        // ← ye wala rehne do, change mat karo
+  fieldMappings: sync.fieldMappings,  
+  fixedValues: sync.fixedValues,      
   organization: sync.organization,
   createdBy: sync.createdBy,
   assignedTo: sync.createdBy,
@@ -616,7 +624,8 @@ export const getSheetData = asyncHandler(async (req, res) => {
   const sync = await GoogleSheetSync.findOne({ _id: syncId, organization });
   if (!sync) throw new ApiError(404, "Sheet sync not found");
 
-  const rows = await fetchSheetRows(sync.sheetId, sync.tabName, sync.accessToken, 1, 100);
+  
+  const rows = await fetchSheetRows(sync.sheetId, sync.tabName, null, 1, 100);
   if (!rows.length) return res.status(200).json(new ApiResponse(200, [], "No data"));
 
   const headers = rows[0];
