@@ -24,6 +24,7 @@ const notificationSchema = new mongoose.Schema(
     type: {
       type: String,
       enum: [
+        // Existing types (unchanged)
         "assignment",
         "status_change",
         "payment",
@@ -37,6 +38,27 @@ const notificationSchema = new mongoose.Schema(
         "lead_reassigned",
         "lead_status_changed",
         "lead_co_assignee_added",
+
+        // New activity-specific types
+        "activity_note",
+        "activity_call",
+        "activity_email",
+        "activity_meeting",
+        "activity_task",
+
+        // New payment-specific types
+        "payment_created",
+        "payment_updated",
+
+        // New recording-specific types
+        "recording_added",
+        "recording_updated",
+        "recording_deleted",
+
+        // New reminder-specific types
+        "reminder_created",
+        "reminder_updated",
+        "reminder_deleted",
       ],
       default: "system",
     },

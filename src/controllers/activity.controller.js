@@ -6,6 +6,12 @@ import asyncHandler from "../utils/asyncHandler.js";
 import { formatPaginatedResponse, parsePagination } from "../utils/paginate.js";
 import logger from "../utils/logger.js";
 
+// ── NEW: Smart activity notification ──
+import {
+  sendActivityNotification,
+  detectActivityChange,
+} from "../utils/leadNotification.utils.js";
+
 /**
  * Get activities (filtered by lead or all)
  * @route GET /api/v1/activities
@@ -23,10 +29,7 @@ export const getActivities = asyncHandler(async (req, res) => {
     skip,
     limit: pageLimit,
     page: pageNum,
-  } = parsePagination({
-    page,
-    limit,
-  });
+  } = parsePagination({ page, limit });
 
   const activities = await Activity.find(filter)
     .skip(skip)
@@ -90,12 +93,13 @@ export const createActivity = asyncHandler(async (req, res) => {
     recordingUrl,
     taskDueDate,
     taskAssignedTo,
+    notifiedUsers,
   } = req.body;
 
   const organization = req.user.organization;
   const createdBy = req.user._id;
 
-  // Validate lead exists
+  // Lead validate karo
   const lead = await Lead.findOne({ _id: leadId, organization });
   if (!lead) {
     throw new ApiError(404, "Lead not found");
@@ -113,10 +117,29 @@ export const createActivity = asyncHandler(async (req, res) => {
     recordingUrl,
     taskDueDate,
     taskAssignedTo,
+    notifiedUsers: Array.isArray(notifiedUsers)
+      ? notifiedUsers.filter(Boolean)
+      : notifiedUsers
+        ? [notifiedUsers]
+        : [],
   });
 
   await activity.save();
   await activity.populate("createdBy", "name email");
+
+  // ── Smart activity created notification ──
+  // Sirf in types ke liye notification - Recording aur Payment alag handle hota hai
+  const notifiableTypes = ["Note", "Call", "Email", "Meeting", "Task"];
+  if (notifiableTypes.includes(type)) {
+    await sendActivityNotification({
+      lead,
+      activity,
+      userId: createdBy,
+      userName: req.user.name,
+      organization,
+      isUpdate: false,
+    });
+  }
 
   logger.info(`Activity created: ${activity._id} for lead ${leadId}`);
 
@@ -140,14 +163,69 @@ export const updateActivity = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Activity not found");
   }
 
-  // Only creator can edit
+  // Only creator or admin can edit
   if (!activity.createdBy.equals(userId) && req.user.role !== "admin") {
     throw new ApiError(403, "Not authorized to update this activity");
   }
 
+  // ── Old values save karo comparison ke liye ──
+  const oldActivity = {
+    text: activity.text,
+    notifiedUsers: activity.notifiedUsers,
+    callDuration: activity.callDuration,
+    callDirection: activity.callDirection,
+    callOutcome: activity.callOutcome,
+    taskDueDate: activity.taskDueDate,
+    taskAssignedTo: activity.taskAssignedTo,
+  };
+
+  const activityType = activity.type;
+
+  // ── Change detect karo ──
+  const incomingData = {
+    text: req.body.text ?? activity.text,
+    notifiedUsers: req.body.notifiedUsers ?? activity.notifiedUsers,
+    callDuration: req.body.callDuration ?? activity.callDuration,
+    callDirection: req.body.callDirection ?? activity.callDirection,
+    callOutcome: req.body.callOutcome ?? activity.callOutcome,
+    taskDueDate: req.body.taskDueDate ?? activity.taskDueDate,
+    taskAssignedTo: req.body.taskAssignedTo ?? activity.taskAssignedTo,
+  };
+
+  const hasChanged = detectActivityChange(
+    oldActivity,
+    incomingData,
+    activityType,
+  );
+
+  // Update karo
   Object.assign(activity, req.body);
   await activity.save();
   await activity.populate("createdBy", "name email");
+
+  // ── Smart activity updated notification ──
+  // Sirf tab jab actual change hua ho
+  const notifiableTypes = ["Note", "Call", "Email", "Meeting", "Task"];
+  if (hasChanged && notifiableTypes.includes(activityType)) {
+    // Lead load karo
+    const lead = await Lead.findOne({
+      _id: activity.leadId,
+      organization,
+    }).lean();
+
+    if (lead) {
+      await sendActivityNotification({
+        lead,
+        activity,
+        userId,
+        userName: req.user.name,
+        organization,
+        isUpdate: true,
+      });
+    }
+  } else if (!hasChanged) {
+    logger.info(`Activity ${id} unchanged, skipping notification`);
+  }
 
   logger.info(`Activity updated: ${id}`);
 
@@ -195,7 +273,6 @@ export const getLeadActivities = asyncHandler(async (req, res) => {
   const { page, limit } = req.query;
   const organization = req.user.organization;
 
-  // Validate lead exists
   const lead = await Lead.findOne({ _id: leadId, organization });
   if (!lead) {
     throw new ApiError(404, "Lead not found");
@@ -205,10 +282,7 @@ export const getLeadActivities = asyncHandler(async (req, res) => {
     skip,
     limit: pageLimit,
     page: pageNum,
-  } = parsePagination({
-    page,
-    limit,
-  });
+  } = parsePagination({ page, limit });
 
   const activities = await Activity.find({ leadId, organization })
     .skip(skip)

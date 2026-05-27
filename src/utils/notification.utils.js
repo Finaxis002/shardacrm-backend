@@ -185,3 +185,9 @@ export const createNotifications = async ({
 
   return docs;
 };
+
+export const createNotificationsWithSender = async (params) =>
+  createNotifications({
+    ...params,
+    includeSender: true,
+  });

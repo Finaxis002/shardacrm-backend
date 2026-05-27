@@ -11,6 +11,13 @@ import User from "../models/User.model.js";
 import { createNotifications } from "../utils/notification.utils.js";
 import { sendReminderEmails } from "../utils/email.utils.js";
 
+// ── NEW: Smart reminder notification ──
+import {
+  sendReminderNotification,
+  buildReminderRecipients,
+  formatReminderDateTime,
+} from "../utils/leadNotification.utils.js";
+
 // ── Google Calendar Helper ────────────────────────────────────────────────────
 
 const makeOAuth2Client = () =>
@@ -23,8 +30,6 @@ const makeOAuth2Client = () =>
 const createGcalEvent = async (organization, reminder, lead) => {
   try {
     const settings = await Settings.findOne({ organization });
-
-    // Only proceed if GCal is connected
     if (!settings?.gcalConnected || !settings?.gcalTokens?.access_token)
       return null;
 
@@ -37,7 +42,6 @@ const createGcalEvent = async (organization, reminder, lead) => {
       scope: settings.gcalTokens.scope,
     });
 
-    // Auto-persist refreshed tokens
     client.on("tokens", async (tokens) => {
       const patch = {
         "gcalTokens.access_token": tokens.access_token,
@@ -49,12 +53,10 @@ const createGcalEvent = async (organization, reminder, lead) => {
     });
 
     const timezone = settings.timezone || "Asia/Kolkata";
-
-    // Build start datetime from reminderDate + reminderTime
-    const dateStr = reminder.reminderDate.toISOString().split("T")[0]; // "2026-05-10"
-    const timeStr = reminder.reminderTime || "09:00"; // "14:30"
+    const dateStr = reminder.reminderDate.toISOString().split("T")[0];
+    const timeStr = reminder.reminderTime || "09:00";
     const startDateTime = new Date(`${dateStr}T${timeStr}:00`);
-    const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000); // +1 hour
+    const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
 
     const eventTitle = `${reminder.type || "Follow-up"}: ${lead.name}`;
     const description = [
@@ -67,7 +69,6 @@ const createGcalEvent = async (organization, reminder, lead) => {
       .join("\n");
 
     const calendar = google.calendar({ version: "v3", auth: client });
-
     const { data } = await calendar.events.insert({
       calendarId: "primary",
       resource: {
@@ -94,30 +95,9 @@ const createGcalEvent = async (organization, reminder, lead) => {
     logger.info(`GCal event created for reminder ${reminder._id}: ${data.id}`);
     return data.id;
   } catch (err) {
-    // Don't fail reminder creation if GCal fails
     logger.warn(`GCal event creation failed (non-fatal): ${err.message}`);
     return null;
   }
-};
-
-const buildReminderNotificationRecipients = (reminder) => {
-  const ids = [
-    reminder.assignedTo?.toString?.() || reminder.assignedTo,
-    ...(Array.isArray(reminder.notifyUsers)
-      ? reminder.notifyUsers.map((id) => id?.toString?.() || id)
-      : []),
-  ];
-  return Array.from(new Set(ids.filter(Boolean)));
-};
-
-const formatReminderDateTime = (reminder) => {
-  const date = new Date(reminder.reminderDate);
-  const dateStr = date.toLocaleDateString("en-IN", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-  return `${dateStr}${reminder.reminderTime ? ` at ${reminder.reminderTime}` : ""}`;
 };
 
 // ── Controllers ───────────────────────────────────────────────────────────────
@@ -132,7 +112,6 @@ export const getReminders = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
 
   let filter = { organization };
-
   if (leadId) filter.leadId = leadId;
   if (status === "pending") filter.isDone = false;
   if (status === "completed") filter.isDone = true;
@@ -208,7 +187,6 @@ export const createReminder = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
   const createdBy = req.user._id;
 
-  // Validate lead exists
   const lead = await Lead.findOne({ _id: leadId, organization });
   if (!lead) {
     throw new ApiError(404, "Lead not found");
@@ -235,23 +213,22 @@ export const createReminder = asyncHandler(async (req, res) => {
   });
 
   await reminder.save();
-
-  const reminderRecipients = buildReminderNotificationRecipients(reminder);
-
   await reminder.populate("leadId", "name phone");
   await reminder.populate("assignedTo", "name email");
-  if (reminderRecipients.length) {
-    await createNotifications({
-      recipientIds: reminderRecipients,
-      senderId: req.user._id,
-      organization,
-      leadId,
-      title: `Reminder created: ${reminder.type || "Follow-up"}`,
-      message: `${req.user.name} created a ${reminder.type || "Follow-up"} reminder for lead ${reminder.leadId?.name || "Lead"} on ${formatReminderDateTime(reminder)}.`,
-      type: "reminder",
-      actionUrl: `/leads/${leadId}`,
-    });
 
+  // ── Smart reminder created notification ──
+  await sendReminderNotification({
+    lead,
+    reminder,
+    userId: createdBy,
+    userName: req.user.name,
+    organization,
+    action: "created",
+  });
+
+  // ── Email notification (same as before) ──
+  const reminderRecipients = buildReminderRecipients(reminder);
+  if (reminderRecipients.length) {
     const settings = await Settings.findOne({ organization });
     if (settings?.gmailEnabled) {
       const reminderUsers = await User.find({
@@ -278,10 +255,9 @@ export const createReminder = asyncHandler(async (req, res) => {
 
   logger.info(`Reminder created: ${reminder._id} for lead ${leadId}`);
 
-  // ── Auto-create Google Calendar event ──────────────────────────────────────
+  // ── Auto-create Google Calendar event ──
   const gcalEventId = await createGcalEvent(organization, reminder, lead);
   if (gcalEventId) {
-    // Save GCal event ID in reminder for future reference (optional)
     await Reminder.findByIdAndUpdate(reminder._id, { gcalEventId });
     reminder.gcalEventId = gcalEventId;
   }
@@ -314,11 +290,11 @@ export const updateReminder = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Reminder not found");
   }
 
-  // Only assigned user or admin can edit
   if (!reminder.assignedTo.equals(userId) && req.user.role !== "admin") {
     throw new ApiError(403, "Not authorized to update this reminder");
   }
 
+  // notifyUsers handle
   if (req.body.notifyUsers !== undefined) {
     reminder.notifyUsers = Array.isArray(req.body.notifyUsers)
       ? req.body.notifyUsers.filter(Boolean)
@@ -332,23 +308,31 @@ export const updateReminder = asyncHandler(async (req, res) => {
     notifyUsers: reminder.notifyUsers,
   });
 
-  const reminderRecipients = buildReminderNotificationRecipients(reminder);
-
+  await reminder.save();
   await reminder.populate("leadId", "name phone");
   await reminder.populate("assignedTo", "name email");
 
-  if (reminderRecipients.length) {
-    await createNotifications({
-      recipientIds: reminderRecipients,
-      senderId: userId,
-      organization,
-      leadId: reminder.leadId,
-      title: `Reminder updated: ${reminder.type || "Follow-up"}`,
-      message: `${req.user.name} updated the ${reminder.type || "Follow-up"} reminder for lead ${reminder.leadId?.name || "Lead"} to ${formatReminderDateTime(reminder)}.`,
-      type: "reminder",
-      actionUrl: `/leads/${reminder.leadId}`,
-    });
+  const lead =
+    reminder.leadId && reminder.leadId._id
+      ? reminder.leadId
+      : await Lead.findById(reminder.leadId).lean();
 
+  // ── Smart reminder updated notification ──
+  await sendReminderNotification({
+    lead: lead || {
+      _id: reminder.leadId?._id || reminder.leadId,
+      name: reminder.leadId?.name || "Lead",
+    },
+    reminder,
+    userId,
+    userName: req.user.name,
+    organization,
+    action: "updated",
+  });
+
+  // ── Email notification (same as before) ──
+  const reminderRecipients = buildReminderRecipients(reminder);
+  if (reminderRecipients.length) {
     const settings = await Settings.findOne({ organization });
     if (settings?.gmailEnabled) {
       const reminderUsers = await User.find({
@@ -361,7 +345,9 @@ export const updateReminder = asyncHandler(async (req, res) => {
       if (emailRecipients.length) {
         const subject = `Reminder updated: ${reminder.type || "Follow-up"} for ${reminder.leadId?.name || "Lead"}`;
         const message = `A reminder has been updated for lead ${reminder.leadId?.name || "Lead"}.\n\nType: ${reminder.type || "Follow-up"}\nDate: ${formatReminderDateTime(reminder)}\n\nNote:\n${reminder.note || "No note provided."}`;
-        const actionUrl = `${process.env.FRONTEND_URL || ""}/leads/${reminder.leadId}`;
+        const reminderLeadId =
+          lead?._id || reminder.leadId?._id || reminder.leadId;
+        const actionUrl = `${process.env.FRONTEND_URL || ""}/leads/${reminderLeadId}`;
 
         await sendReminderEmails({
           recipients: emailRecipients,
@@ -394,7 +380,26 @@ export const deleteReminder = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Reminder not found");
   }
 
-  // Delete GCal event too if it exists
+  // Lead load karo notification ke liye
+  const lead =
+    reminder.leadId && reminder.leadId._id
+      ? reminder.leadId
+      : await Lead.findById(reminder.leadId).lean();
+
+  // ── Smart reminder deleted notification ──
+  // Delete se PEHLE notification bhejo
+  if (lead) {
+    await sendReminderNotification({
+      lead,
+      reminder,
+      userId: req.user._id,
+      userName: req.user.name,
+      organization,
+      action: "deleted",
+    });
+  }
+
+  // ── GCal event delete (same as before) ──
   if (reminder.gcalEventId) {
     try {
       const settings = await Settings.findOne({ organization });
