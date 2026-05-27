@@ -12,7 +12,25 @@ import logger from "../utils/logger.js";
 import Settings from "../models/Settings.model.js";
 import { canUser } from "../utils/permissions.js";
 import { google } from "googleapis";
-import { createNotifications } from "../utils/notification.utils.js";
+import {
+  createNotifications,
+  createNotificationsWithSender,
+} from "../utils/notification.utils.js";
+
+// ── NEW: Smart notification utils import ──
+import {
+  buildLeadRecipients,
+  buildReminderRecipients,
+  formatReminderDateTime,
+  sendProfileUpdateNotification,
+  sendStatusChangeNotification,
+  sendReassignmentNotification,
+  sendActivityNotification,
+  sendPaymentNotification,
+  sendRecordingNotification,
+  sendReminderNotification,
+  detectActivityChange,
+} from "../utils/leadNotification.utils.js";
 
 /**
  * Get all leads with filters and pagination
@@ -299,7 +317,7 @@ export const getLead = asyncHandler(async (req, res) => {
     );
 });
 
-// ── Google Calendar Helpers ─────────────────────────────────────────────
+// ── Google Calendar Helpers ──────────────────────────────────────────────────
 
 const makeOAuth2Client = () =>
   new google.auth.OAuth2(
@@ -319,47 +337,6 @@ const extractId = (value) => {
     return "";
   }
   return String(value);
-};
-
-const buildLeadNotificationRecipients = (
-  lead,
-  senderId,
-  includeOldAssignee = false,
-  oldAssigneeId = null,
-) => {
-  const recipientIds = [
-    extractId(lead.assignedTo),
-    ...(Array.isArray(lead.coAssignees)
-      ? lead.coAssignees.map((id) => extractId(id))
-      : []),
-  ];
-
-  if (includeOldAssignee && oldAssigneeId) {
-    recipientIds.push(extractId(oldAssigneeId));
-  }
-
-  return Array.from(new Set(recipientIds.filter(Boolean)));
-};
-
-const buildReminderNotificationRecipients = (reminder) => {
-  const ids = [
-    extractId(reminder.assignedTo),
-    ...(Array.isArray(reminder.notifyUsers)
-      ? reminder.notifyUsers.map((id) => extractId(id))
-      : []),
-  ];
-
-  return Array.from(new Set(ids.filter(Boolean)));
-};
-
-const formatReminderDateTime = (reminder) => {
-  const date = new Date(reminder.reminderDate);
-  const dateStr = date.toLocaleDateString("en-IN", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-  return `${dateStr}${reminder.reminderTime ? ` at ${reminder.reminderTime}` : ""}`;
 };
 
 const createGcalEventForReminder = async (organization, reminderDoc, lead) => {
@@ -544,7 +521,6 @@ export const createLead = asyncHandler(async (req, res) => {
     throw new ApiError(403, "Not authorized to add co-assignees to this lead");
   }
 
-  // Check if lead with same phone already exists in organization
   const existingLead = await Lead.findOne({
     organization,
     $or: [
@@ -556,7 +532,6 @@ export const createLead = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Lead with this phone number already exists");
   }
 
-  // Validate assignedTo user exists
   const assignedUser = await User.findOne({
     _id: assignedUserId,
     organization,
@@ -588,6 +563,7 @@ export const createLead = asyncHandler(async (req, res) => {
     createdBy,
     customFields: customFields || {},
   });
+
   if (recording && (recording.label || recording.url)) {
     lead.recording = {
       label: recording.label || "",
@@ -598,23 +574,24 @@ export const createLead = asyncHandler(async (req, res) => {
   await lead.save();
   await lead.populate("assignedTo", "name email");
 
-  const leadCreateRecipients = buildLeadNotificationRecipients(lead);
+  // ── Lead created notification ──
+  // buildLeadRecipients: assignedTo + coAssignees + createdBy
+  const leadCreateRecipients = buildLeadRecipients(lead);
   if (leadCreateRecipients.length) {
-    await createNotifications({
+    await createNotificationsWithSender({
       recipientIds: leadCreateRecipients,
       senderId: createdBy,
       organization,
       leadId: lead._id,
-      title: `Lead created: ${lead.name}`,
+      title: `Lead Created: ${lead.name}`,
       message: `${req.user.name} created a new lead ${lead.name}.`,
       type: "lead_created",
       actionUrl: `/leads/${lead._id}`,
-      includeSender: true,
-      excludeSender: false,
     });
   }
 
   const activityPromises = [];
+
   if (note) {
     activityPromises.push(
       Activity.create({
@@ -725,23 +702,16 @@ export const createLead = asyncHandler(async (req, res) => {
     });
     await reminderItem.save();
 
-    const reminderRecipients =
-      buildReminderNotificationRecipients(reminderItem);
-    if (reminderRecipients.length) {
-      await createNotifications({
-        recipientIds: reminderRecipients,
-        senderId: req.user._id,
-        organization,
-        leadId: lead._id,
-        title: `Reminder created: ${reminderItem.type || "Follow-up"}`,
-        message: `${req.user.name} created a ${reminderItem.type || "Follow-up"} reminder for lead ${lead.name} on ${formatReminderDateTime(reminderItem)}.`,
-        type: "reminder",
-        actionUrl: `/leads/${lead._id}`,
-        includeSender: true,
-      });
-    }
+    // ── Smart reminder notification ──
+    await sendReminderNotification({
+      lead,
+      reminder: reminderItem,
+      userId: createdBy,
+      userName: req.user.name,
+      organization,
+      action: "created",
+    });
 
-    // ✅ Google Calendar event create karo
     const gcalEventId = await createGcalEventForReminder(
       organization,
       reminderItem,
@@ -753,9 +723,9 @@ export const createLead = asyncHandler(async (req, res) => {
   }
 
   const results = await Promise.allSettled(activityPromises);
-  results.forEach((r, i) => {
+  results.forEach((r) => {
     if (r.status === "rejected") {
-      // Error handling optional
+      logger.warn(`Activity creation failed: ${r.reason}`);
     }
   });
 
@@ -773,6 +743,7 @@ export const updateLead = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const organization = req.user.organization;
   const userId = req.user._id;
+  const userName = req.user.name;
 
   const lead = await Lead.findOne({ _id: id, organization });
   if (!lead) {
@@ -788,13 +759,38 @@ export const updateLead = asyncHandler(async (req, res) => {
     throw new ApiError(403, "Not authorized to update this lead");
   }
 
-  const oldStatus = lead.status;
-  const oldAssignee = lead.assignedTo && lead.assignedTo.toString();
+  // ── OLD VALUES save karo (comparison ke liye) ──
+  const oldLead = {
+    name: lead.name,
+    phone: lead.phone,
+    alternatePhone: lead.alternatePhone,
+    email: lead.email,
+    city: lead.city,
+    source: lead.source,
+    status: lead.status,
+    dealValue: lead.dealValue,
+    product: lead.product,
+    closeDate: lead.closeDate,
+    priority: lead.priority,
+    initialNote: lead.initialNote,
+    customFields:
+      lead.customFields instanceof Map
+        ? Object.fromEntries(lead.customFields)
+        : { ...(lead.customFields || {}) },
+    coAssignees: lead.coAssignees
+      ? lead.coAssignees.map((id) => String(id))
+      : [],
+  };
 
+  const oldStatus = lead.status;
+  const oldAssigneeId = lead.assignedTo && lead.assignedTo.toString();
+
+  // ── note field handle ──
   if (req.body.note !== undefined) {
     lead.initialNote = req.body.note;
   }
 
+  // ── Profile fields update ──
   const allowedFields = [
     "name",
     "phone",
@@ -817,16 +813,26 @@ export const updateLead = asyncHandler(async (req, res) => {
     }
   });
 
+  // ── Product array handle ──
+  if (req.body.product !== undefined) {
+    lead.product = Array.isArray(req.body.product)
+      ? req.body.product.join(", ")
+      : req.body.product;
+  }
+
+  // ── Recording handle ──
   const previousRecording = lead.recording
-    ? { ...lead.recording }
+    ? { label: lead.recording.label || "", url: lead.recording.url || "" }
     : { label: "", url: "" };
 
   let recordingChanged = false;
+  let incomingRecording = { label: "", url: "" };
+
   if (req.body.recording !== undefined) {
-    const recordingPayload = req.body.recording || {};
-    const incomingRecording = {
-      label: recordingPayload.label || "",
-      url: recordingPayload.url || "",
+    const rp = req.body.recording || {};
+    incomingRecording = {
+      label: rp.label || "",
+      url: rp.url || "",
     };
     recordingChanged =
       incomingRecording.label !== previousRecording.label ||
@@ -834,6 +840,7 @@ export const updateLead = asyncHandler(async (req, res) => {
     lead.recording = incomingRecording;
   }
 
+  // ── Co-assignees handle ──
   if (req.body.coAssignees !== undefined) {
     const hasAssignPermission =
       req.user.role === "admin" ||
@@ -869,6 +876,7 @@ export const updateLead = asyncHandler(async (req, res) => {
     lead.coAssignees = uniqueIds;
   }
 
+  // ── Assignee handle ──
   const requestedAssignedTo =
     req.body.assignedTo ?? req.body.assignee ?? req.body.assigned_to;
 
@@ -892,74 +900,56 @@ export const updateLead = asyncHandler(async (req, res) => {
     lead.assignedTo = requestedAssignedTo;
   }
 
-  if (req.body.product !== undefined) {
-    lead.product = Array.isArray(req.body.product)
-      ? req.body.product.join(", ")
-      : req.body.product;
-  }
-
   await lead.save();
   await lead.populate("assignedTo", "name email");
 
+  // ════════════════════════════════════════════════════════════
+  //  SMART NOTIFICATIONS - Sirf actual change pe trigger hongi
+  // ════════════════════════════════════════════════════════════
+
   const isReassigned =
     requestedAssignedTo !== undefined &&
-    oldAssignee !== String(requestedAssignedTo);
+    oldAssigneeId !== String(requestedAssignedTo);
 
+  // ── 1. REASSIGNMENT notification ──
   if (isReassigned) {
-    const newUser = await User.findOne({
-      _id: requestedAssignedTo,
+    const newAssignee = await User.findById(requestedAssignedTo).select("name");
+    const oldAssignee = oldAssigneeId
+      ? await User.findById(oldAssigneeId).select("name")
+      : null;
+
+    await sendReassignmentNotification({
+      lead,
+      oldAssigneeId,
+      newAssigneeName: newAssignee?.name,
+      oldAssigneeName: oldAssignee?.name,
+      userId,
+      userName,
       organization,
     });
-    const previousName = oldAssignee
-      ? (await User.findById(oldAssignee))?.name
-      : "Unassigned";
 
-    const reassignmentRecipients = buildLeadNotificationRecipients(
-      lead,
-      userId,
-      true,
-      oldAssignee,
-    );
-
-    if (reassignmentRecipients.length) {
-      await createNotifications({
-        recipientIds: reassignmentRecipients,
-        senderId: userId,
-        organization,
-        leadId: lead._id,
-        title: `Lead reassigned: ${lead.name}`,
-        message: `${req.user.name} reassigned lead ${lead.name} from ${previousName} to ${newUser?.name || "Unknown"}.`,
-        type: "lead_reassigned",
-        actionUrl: `/leads/${lead._id}`,
-        includeSender: true,
-      });
-    }
-  } else {
-    const hasLeadUpdate =
-      allowedFields.some((field) => req.body[field] !== undefined) ||
-      req.body.coAssignees !== undefined ||
-      requestedAssignedTo !== undefined ||
-      req.body.recording !== undefined;
-
-    if (hasLeadUpdate) {
-      const updateRecipients = buildLeadNotificationRecipients(lead, userId);
-      if (updateRecipients.length) {
-        await createNotifications({
-          recipientIds: updateRecipients,
-          senderId: userId,
-          organization,
-          leadId: lead._id,
-          title: `Lead updated: ${lead.name}`,
-          message: `${req.user.name} updated lead ${lead.name}.`,
-          type: "lead_updated",
-          actionUrl: `/leads/${lead._id}`,
-          includeSender: true,
-        });
-      }
-    }
+    // Reassignment activity log
+    await Activity.create({
+      leadId: lead._id,
+      type: "Lead Reassignment",
+      text: `Lead reassigned from ${oldAssignee?.name || "Unassigned"} to ${newAssignee?.name || "Unknown"}`,
+      createdBy: userId,
+      organization,
+    });
   }
 
+  // ── 2. STATUS CHANGE notification ──
+  // Sirf tab jab status actually change hua ho
   if (oldStatus !== lead.status) {
+    await sendStatusChangeNotification({
+      lead,
+      oldStatus,
+      newStatus: lead.status,
+      userId,
+      userName,
+      organization,
+    });
+
     await Activity.create({
       leadId: lead._id,
       type: "Status Change",
@@ -971,39 +961,115 @@ export const updateLead = asyncHandler(async (req, res) => {
     });
   }
 
-  if (
-    req.body.assignedTo !== undefined &&
-    oldAssignee !== String(req.body.assignedTo)
-  ) {
-    const newUser = await User.findOne({
-      _id: req.body.assignedTo,
-      organization,
-    });
-    const previousName = oldAssignee
-      ? (await User.findById(oldAssignee))?.name
-      : "Unassigned";
+  // ── 3. CO-ASSIGNEES change notification ──
+  if (req.body.coAssignees !== undefined) {
+    const oldCoIds = (oldLead.coAssignees || []).map(String).sort().join(",");
+    const newCoIds = (lead.coAssignees || []).map(String).sort().join(",");
 
-    await Activity.create({
-      leadId: lead._id,
-      type: "Lead Reassignment",
-      text: `Lead reassigned from ${previousName} to ${newUser?.name || "Unknown"}`,
-      createdBy: userId,
-      organization,
-    });
+    if (oldCoIds !== newCoIds) {
+      const oldSet = new Set(oldLead.coAssignees || []);
+      const newSet = new Set((lead.coAssignees || []).map(String));
+
+      const addedIds = [...newSet].filter((id) => !oldSet.has(id));
+      const removedIds = [...oldSet].filter((id) => !newSet.has(id));
+
+      let addedNames = [];
+      if (addedIds.length) {
+        const addedUsers = await User.find({ _id: { $in: addedIds } })
+          .select("name")
+          .lean();
+        addedNames = addedUsers.map((u) => u.name);
+      }
+
+      let removedNames = [];
+      if (removedIds.length) {
+        const removedUsers = await User.find({ _id: { $in: removedIds } })
+          .select("name")
+          .lean();
+        removedNames = removedUsers.map((u) => u.name);
+      }
+
+      const hadCoAssigneesBefore = oldLead.coAssignees.length > 0;
+      const ACTION = hadCoAssigneesBefore ? "Updated" : "Added";
+
+      const parts = [];
+      if (addedNames.length) parts.push(`added ${addedNames.join(", ")}`);
+      if (removedNames.length) parts.push(`removed ${removedNames.join(", ")}`);
+
+      if (parts.length) {
+        const recipients = buildLeadRecipients(lead, removedIds);
+        if (recipients.length) {
+          await createNotificationsWithSender({
+            recipientIds: recipients,
+            senderId: userId,
+            organization,
+            leadId: lead._id,
+            title: `Co-assignee ${ACTION}: ${lead.name}`,
+            message: `${userName} ${parts.join(" and ")} as co-assignee${
+              addedNames.length + removedNames.length > 1 ? "s" : ""
+            } for lead ${lead.name}.`,
+            type: "lead_co_assignee_added",
+            actionUrl: `/leads/${lead._id}`,
+          });
+        }
+      }
+    }
   }
 
-  if (req.body.recording !== undefined && recordingChanged) {
-    await Activity.create({
-      leadId: lead._id,
-      type: "Recording",
-      text: lead.recording.label || "Recording Deleted",
-      recordingUrl: lead.recording.url || undefined,
-      createdBy: userId,
-      organization,
-    });
+  // ── 4. PROFILE UPDATE notification ──
+  // Sirf profile fields change hone par, status aur reassign se alag
+  await sendProfileUpdateNotification({
+    lead,
+    oldLead,
+    userId,
+    userName,
+    organization,
+  });
+  // ── 5. RECORDING notification ──
+  // Sirf tab jab recording actually change hui ho
+  if (recordingChanged) {
+    // Smart action detect karo
+    const wasEmpty = !previousRecording.url && !previousRecording.label;
+    const isNowEmpty = !incomingRecording.url && !incomingRecording.label;
+
+    let recordingAction;
+    if (wasEmpty && !isNowEmpty) {
+      recordingAction = "added"; // pehle kuch nahi tha, ab add hua
+    } else if (!wasEmpty && isNowEmpty) {
+      recordingAction = "deleted"; // pehle tha, ab clear kar diya
+    } else if (!wasEmpty && !isNowEmpty) {
+      recordingAction = "updated"; // pehle bhi tha, ab change hua
+    } else {
+      recordingAction = null; // dono empty, skip
+    }
+
+    if (recordingAction) {
+      await sendRecordingNotification({
+        lead,
+        recording: incomingRecording,
+        previousRecording,
+        userId,
+        userName,
+        organization,
+        action: recordingAction,
+      });
+
+      await Activity.create({
+        leadId: lead._id,
+        type: "Recording",
+        text: `Recording ${recordingAction}${
+          incomingRecording.label ? `: ${incomingRecording.label}` : ""
+        }`,
+        recordingUrl: incomingRecording.url || undefined,
+        createdBy: userId,
+        organization,
+      });
+    }
   }
 
-  // updateLead mein
+  // ════════════════════════════════════════════════════════════
+  //  ACTIVITIES - Smart change detection
+  // ════════════════════════════════════════════════════════════
   const activityList = Array.isArray(req.body.activities)
     ? req.body.activities
     : req.body.activity && req.body.activity.type
@@ -1040,62 +1106,54 @@ export const updateLead = asyncHandler(async (req, res) => {
       activityData.taskCompleted = false;
     }
 
+    let savedActivity = null;
+    let isUpdate = false;
+
     if (act._id) {
+      // Existing activity - change detect karo
       const existingActivity = await Activity.findOne({
         _id: act._id,
         organization,
       });
       if (!existingActivity) continue;
 
-      const hasTextChange = activityData.text !== existingActivity.text;
-      const normalizeIds = (value) =>
-        Array.isArray(value) ? value.map(String).filter(Boolean) : [];
-      const existingNotified = normalizeIds(existingActivity.notifiedUsers);
-      const incomingNotified = normalizeIds(activityData.notifiedUsers);
-      const hasNotifyChange =
-        existingNotified.length !== incomingNotified.length ||
-        existingNotified.some((id, index) => id !== incomingNotified[index]);
+      // detectActivityChange use karo
+      const hasChanged = detectActivityChange(
+        existingActivity,
+        activityData,
+        act.type,
+      );
 
-      let hasOtherChange = hasTextChange || hasNotifyChange;
-
-      if (act.type === "Call") {
-        if (activityData.callDuration !== existingActivity.callDuration) {
-          hasOtherChange = true;
-        }
-        if (activityData.callDirection !== existingActivity.callDirection) {
-          hasOtherChange = true;
-        }
-        if (activityData.callOutcome !== existingActivity.callOutcome) {
-          hasOtherChange = true;
-        }
+      if (!hasChanged) {
+        logger.info(`Activity ${act._id} unchanged, skipping`);
+        continue; // Koi change nahi - skip
       }
 
-      if (act.type === "Task") {
-        const existingDue = existingActivity.taskDueDate
-          ? existingActivity.taskDueDate.toISOString().split("T")[0]
-          : "";
-        const incomingDue = activityData.taskDueDate
-          ? new Date(activityData.taskDueDate).toISOString().split("T")[0]
-          : "";
-        if (incomingDue !== existingDue) {
-          hasOtherChange = true;
-        }
-        if (
-          String(activityData.taskAssignedTo || "") !==
-          String(existingActivity.taskAssignedTo || "")
-        ) {
-          hasOtherChange = true;
-        }
-      }
-
-      if (hasOtherChange) {
-        await Activity.create(activityData);
-      }
+      Object.assign(existingActivity, activityData);
+      savedActivity = await existingActivity.save();
+      isUpdate = true;
     } else if (activityData.text.trim()) {
-      await Activity.create(activityData);
+      // New activity
+      savedActivity = await Activity.create(activityData);
+      isUpdate = false;
+    }
+
+    // Sirf tab notification bhejo jab activity actually save hui
+    if (savedActivity) {
+      await sendActivityNotification({
+        lead,
+        activity: savedActivity,
+        userId,
+        userName,
+        organization,
+        isUpdate,
+      });
     }
   }
 
+  // ════════════════════════════════════════════════════════════
+  //  PAYMENT - Smart change detection
+  // ════════════════════════════════════════════════════════════
   if (req.body.payment && req.body.payment.amount !== undefined) {
     const paymentPayload = {
       leadId: lead._id,
@@ -1116,12 +1174,48 @@ export const updateLead = asyncHandler(async (req, res) => {
       createdAt: -1,
     });
 
-    const paymentActivityText = `Payment ${existingPayment ? "updated" : "recorded"}: ₹${paymentPayload.amount}${paymentPayload.reference ? ` (${paymentPayload.reference})` : ""}`;
-    const createPaymentActivity = async () => {
+    let paymentChanged = false;
+    let isPaymentUpdate = false;
+
+    if (existingPayment) {
+      // Change detect karo
+      const prevDate = existingPayment.paymentDate
+        ? existingPayment.paymentDate.toISOString()
+        : "";
+      const newDate = paymentPayload.paymentDate
+        ? paymentPayload.paymentDate.toISOString()
+        : "";
+
+      paymentChanged =
+        existingPayment.amount !== paymentPayload.amount ||
+        existingPayment.paymentMode !== paymentPayload.paymentMode ||
+        existingPayment.status !== paymentPayload.status ||
+        (existingPayment.reference || "") !==
+          (paymentPayload.reference || "") ||
+        prevDate !== newDate;
+
+      if (paymentChanged) {
+        existingPayment.amount = paymentPayload.amount;
+        existingPayment.paymentMode = paymentPayload.paymentMode;
+        existingPayment.status = paymentPayload.status;
+        existingPayment.reference = paymentPayload.reference;
+        existingPayment.paymentDate = paymentPayload.paymentDate;
+        existingPayment.recordedBy = userId;
+        await existingPayment.save();
+        isPaymentUpdate = true;
+      }
+    } else {
+      await Payment.create(paymentPayload);
+      paymentChanged = true;
+      isPaymentUpdate = false;
+    }
+
+    // Sirf change pe activity + notification
+    if (paymentChanged) {
       await Activity.create({
         leadId: lead._id,
         type: "Payment",
-        text: paymentActivityText,
+        text: `Payment ${isPaymentUpdate ? "updated" : "recorded"}: ₹${paymentPayload.amount}${paymentPayload.reference ? ` (${paymentPayload.reference})` : ""}`,
         paymentAmount: paymentPayload.amount,
         paymentMode: paymentPayload.paymentMode,
         paymentStatus: paymentPayload.status,
@@ -1130,45 +1224,26 @@ export const updateLead = asyncHandler(async (req, res) => {
         createdBy: userId,
         organization,
       });
-    };
 
-    if (existingPayment) {
-      const previousPaymentDate = existingPayment.paymentDate
-        ? existingPayment.paymentDate.toISOString()
-        : "";
-      const incomingPaymentDate = paymentPayload.paymentDate
-        ? paymentPayload.paymentDate.toISOString()
-        : "";
-      const paymentChanged =
-        existingPayment.amount !== paymentPayload.amount ||
-        existingPayment.paymentMode !== paymentPayload.paymentMode ||
-        existingPayment.status !== paymentPayload.status ||
-        (existingPayment.reference || "") !==
-          (paymentPayload.reference || "") ||
-        previousPaymentDate !== incomingPaymentDate;
-
-      existingPayment.amount = paymentPayload.amount;
-      existingPayment.paymentMode = paymentPayload.paymentMode;
-      existingPayment.status = paymentPayload.status;
-      existingPayment.reference = paymentPayload.reference;
-      existingPayment.paymentDate = paymentPayload.paymentDate;
-      existingPayment.recordedBy = userId;
-      await existingPayment.save();
-
-      if (paymentChanged) {
-        await createPaymentActivity();
-      }
-    } else {
-      await Payment.create(paymentPayload);
-      await createPaymentActivity();
+      await sendPaymentNotification({
+        lead,
+        payment: paymentPayload,
+        userId,
+        userName,
+        organization,
+        isUpdate: isPaymentUpdate,
+      });
     }
   }
 
+  // ════════════════════════════════════════════════════════════
+  //  REMINDER - Smart create/update
+  // ════════════════════════════════════════════════════════════
   if (req.body.reminder && req.body.reminder.reminderDate) {
     const reminderData = req.body.reminder;
 
     if (reminderData._id) {
-      // 🔁 Update existing reminder
+      // Update existing reminder
       const existingReminder = await Reminder.findById(reminderData._id);
       if (existingReminder) {
         const oldDate = existingReminder.reminderDate;
@@ -1186,23 +1261,17 @@ export const updateLead = asyncHandler(async (req, res) => {
             : [];
         await existingReminder.save();
 
-        const reminderRecipients =
-          buildReminderNotificationRecipients(existingReminder);
-        if (reminderRecipients.length) {
-          await createNotifications({
-            recipientIds: reminderRecipients,
-            senderId: req.user._id,
-            organization,
-            leadId: lead._id,
-            title: `Reminder updated: ${existingReminder.type || "Follow-up"}`,
-            message: `${req.user.name} updated the ${existingReminder.type || "Follow-up"} reminder for lead ${lead.name} to ${formatReminderDateTime(existingReminder)}.`,
-            type: "reminder",
-            actionUrl: `/leads/${lead._id}`,
-            includeSender: true,
-          });
-        }
+        // Smart reminder updated notification
+        await sendReminderNotification({
+          lead,
+          reminder: existingReminder,
+          userId,
+          userName,
+          organization,
+          action: "updated",
+        });
 
-        // Agar date/time change hua hai toh GCal event update karo
+        // GCal update if date/time changed
         const dateChanged =
           oldDate.toDateString() !==
           existingReminder.reminderDate.toDateString();
@@ -1216,7 +1285,7 @@ export const updateLead = asyncHandler(async (req, res) => {
         }
       }
     } else {
-      // 🆕 Create new reminder
+      // Create new reminder
       const newReminder = await Reminder.create({
         leadId: lead._id,
         type: reminderData.type || "Call",
@@ -1232,21 +1301,15 @@ export const updateLead = asyncHandler(async (req, res) => {
         organization,
       });
 
-      const reminderRecipients =
-        buildReminderNotificationRecipients(newReminder);
-      if (reminderRecipients.length) {
-        await createNotifications({
-          recipientIds: reminderRecipients,
-          senderId: req.user._id,
-          organization,
-          leadId: lead._id,
-          title: `Reminder created: ${newReminder.type || "Follow-up"}`,
-          message: `${req.user.name} created a ${newReminder.type || "Follow-up"} reminder for lead ${lead.name} on ${formatReminderDateTime(newReminder)}.`,
-          type: "reminder",
-          actionUrl: `/leads/${lead._id}`,
-          includeSender: true,
-        });
-      }
+      // Smart reminder created notification
+      await sendReminderNotification({
+        lead,
+        reminder: newReminder,
+        userId,
+        userName,
+        organization,
+        action: "created",
+      });
 
       const gcalEventId = await createGcalEventForReminder(
         organization,
@@ -1282,19 +1345,18 @@ export const deleteLead = asyncHandler(async (req, res) => {
     throw new ApiError(403, "Not authorized to delete this lead");
   }
 
-  const deleteRecipients = buildLeadNotificationRecipients(lead, req.user._id);
-
+  // ── Delete notification - buildLeadRecipients use karo ──
+  const deleteRecipients = buildLeadRecipients(lead);
   if (deleteRecipients.length) {
-    await createNotifications({
+    await createNotificationsWithSender({
       recipientIds: deleteRecipients,
       senderId: req.user._id,
       organization,
       leadId: lead._id,
-      title: `Lead deleted: ${lead.name}`,
+      title: `Lead Deleted: ${lead.name}`,
       message: `${req.user.name} deleted lead ${lead.name}.`,
       type: "lead_deleted",
       actionUrl: `/leads/${lead._id}`,
-      includeSender: true,
     });
   }
 
@@ -1333,13 +1395,11 @@ export const deleteLead = asyncHandler(async (req, res) => {
   }
 
   await Reminder.deleteMany({ leadId: id });
-
   await Lead.findByIdAndDelete(id);
-
   await Activity.deleteMany({ leadId: id });
 
   logger.info(
-    `Lead and associated reminders deleted: ${id} by user ${req.user._id}`,
+    `Lead and associated data deleted: ${id} by user ${req.user._id}`,
   );
 
   res.status(200).json(new ApiResponse(200, null, "Lead deleted successfully"));
@@ -1362,10 +1422,15 @@ export const updateLeadStatus = asyncHandler(async (req, res) => {
   }
 
   const oldStatus = lead.status;
+
+  // Same status → skip
+  if (oldStatus === status) {
+    return res.status(200).json(new ApiResponse(200, lead, "Status unchanged"));
+  }
+
   lead.status = status;
   await lead.save();
 
-  // Log activity
   await Activity.create({
     leadId: lead._id,
     type: "Status Change",
@@ -1376,20 +1441,15 @@ export const updateLeadStatus = asyncHandler(async (req, res) => {
     organization,
   });
 
-  const statusRecipients = buildLeadNotificationRecipients(lead, userId);
-  if (statusRecipients.length) {
-    await createNotifications({
-      recipientIds: statusRecipients,
-      senderId: userId,
-      organization,
-      leadId: lead._id,
-      title: `Lead status updated: ${lead.name}`,
-      message: `${req.user.name} changed status from ${oldStatus} to ${status} for lead ${lead.name}.`,
-      type: "lead_status_changed",
-      actionUrl: `/leads/${lead._id}`,
-      includeSender: true,
-    });
-  }
+  // Smart status notification
+  await sendStatusChangeNotification({
+    lead,
+    oldStatus,
+    newStatus: status,
+    userId,
+    userName: req.user.name,
+    organization,
+  });
 
   logger.info(`Lead status updated: ${id} to ${status}`);
 
@@ -1415,50 +1475,38 @@ export const assignLead = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Lead not found");
   }
 
-  // Validate user exists
   const user = await User.findOne({ _id: assignedTo, organization });
   if (!user) {
     throw new ApiError(400, "User not found in organization");
   }
 
-  const previousAssignee = lead.assignedTo;
+  const previousAssigneeId = lead.assignedTo?.toString();
+  const previousAssignee = previousAssigneeId
+    ? await User.findById(previousAssigneeId).select("name")
+    : null;
+
   lead.assignedTo = assignedTo;
   await lead.save();
   await lead.populate("assignedTo", "name email");
 
-  // Log activity
-  const previousName = previousAssignee
-    ? (await User.findById(previousAssignee))?.name
-    : "Unassigned";
   await Activity.create({
     leadId: lead._id,
-    type: "Note",
-    text: `Lead reassigned from ${previousName} to ${user.name}`,
+    type: "Lead Reassignment",
+    text: `Lead reassigned from ${previousAssignee?.name || "Unassigned"} to ${user.name}`,
     createdBy: userId,
     organization,
   });
 
-  if (String(previousAssignee) !== String(assignedTo)) {
-    const assignmentRecipients = buildLeadNotificationRecipients(
+  if (previousAssigneeId !== String(assignedTo)) {
+    await sendReassignmentNotification({
       lead,
+      oldAssigneeId: previousAssigneeId,
+      newAssigneeName: user.name,
+      oldAssigneeName: previousAssignee?.name,
       userId,
-      true,
-      previousAssignee,
-    );
-
-    if (assignmentRecipients.length) {
-      await createNotifications({
-        recipientIds: assignmentRecipients,
-        senderId: userId,
-        organization,
-        leadId: lead._id,
-        title: `Lead reassigned: ${lead.name}`,
-        message: `${req.user.name} reassigned lead ${lead.name} from ${previousName} to ${user.name}.`,
-        type: "lead_reassigned",
-        actionUrl: `/leads/${lead._id}`,
-        includeSender: true,
-      });
-    }
+      userName: req.user.name,
+      organization,
+    });
   }
 
   logger.info(`Lead reassigned: ${id} to ${assignedTo}`);
@@ -1483,13 +1531,11 @@ export const addCoAssignee = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Lead not found");
   }
 
-  // Check if user exists
   const user = await User.findOne({ _id: userId, organization });
   if (!user) {
     throw new ApiError(400, "User not found in organization");
   }
 
-  // Check if already co-assigned
   if (lead.coAssignees.includes(userId)) {
     throw new ApiError(400, "User is already a co-assignee");
   }
@@ -1506,21 +1552,18 @@ export const addCoAssignee = asyncHandler(async (req, res) => {
     organization,
   });
 
-  const coAssigneeRecipients = buildLeadNotificationRecipients(
-    lead,
-    req.user._id,
-  );
+  // buildLeadRecipients use karo
+  const coAssigneeRecipients = buildLeadRecipients(lead);
   if (coAssigneeRecipients.length) {
-    await createNotifications({
+    await createNotificationsWithSender({
       recipientIds: coAssigneeRecipients,
       senderId: req.user._id,
       organization,
       leadId: lead._id,
-      title: `Added co-assignee: ${lead.name}`,
+      title: `Co-assignee Added: ${lead.name}`,
       message: `${req.user.name} added ${user.name} as a co-assignee for lead ${lead.name}.`,
       type: "lead_co_assignee_added",
       actionUrl: `/leads/${lead._id}`,
-      includeSender: true,
     });
   }
 
@@ -1623,7 +1666,6 @@ export const bulkDeleteLeads = asyncHandler(async (req, res) => {
     throw new ApiError(403, "Not authorized to delete leads");
   }
 
-  // Delete all associated data
   await Promise.all([
     Activity.deleteMany({ leadId: { $in: ids }, organization }),
     Reminder.deleteMany({ leadId: { $in: ids }, organization }),
@@ -1681,7 +1723,6 @@ export const bulkAssignLeads = asyncHandler(async (req, res) => {
     { $set: { assignedTo } },
   );
 
-  // Log activity for each lead
   const activities = ids.map((leadId) => ({
     leadId,
     type: "Note",
@@ -1731,7 +1772,6 @@ export const getLeadIds = asyncHandler(async (req, res) => {
 
   const filter = { organization };
 
-  // Status Filter
   if (status) {
     const statusParam = String(status).trim();
     if (statusParam === "active") {
@@ -1741,33 +1781,24 @@ export const getLeadIds = asyncHandler(async (req, res) => {
     }
   }
 
-  // Source Filter
   if (source) filter.source = source;
-
-  // Priority Filter
   if (priority) filter.priority = priority;
 
-  // Date Filter
   if (dateFrom || dateTo) {
     const dateField =
       dateFilterType === "closeDate" ? "closeDate" : "createdAt";
     const dateFilter = {};
-
-    if (dateFrom) {
-      dateFilter.$gte = new Date(dateFrom);
-    }
+    if (dateFrom) dateFilter.$gte = new Date(dateFrom);
     if (dateTo) {
       const endDate = new Date(dateTo);
       endDate.setHours(23, 59, 59, 999);
       dateFilter.$lte = endDate;
     }
-
     if (Object.keys(dateFilter).length > 0) {
       filter[dateField] = dateFilter;
     }
   }
 
-  // Access Control
   let accessFilter = null;
   if (canViewAllLeads) {
     if (assignedTo) filter.assignedTo = assignedTo;
@@ -1775,7 +1806,6 @@ export const getLeadIds = asyncHandler(async (req, res) => {
     accessFilter = { $or: [{ assignedTo: userId }, { coAssignees: userId }] };
   }
 
-  // Search Filter
   if (search) {
     const searchFilter = {
       $or: [
