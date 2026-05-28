@@ -25,10 +25,12 @@ import logoutOtpRoutes from "./routes/Logoutotp.route.js";
 import metaWebhookRoutes from "./routes/metaWebhook.routes.js";
 import { fileURLToPath } from "url";
 import path from "path";
+import crossSellRouter from "./routes/crossSell.routes.js";
+import startEmailScheduler from "./utils/emailScheduler.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
-
+startEmailScheduler();
 // Security middleware
 app.use(helmet());
 app.use(mongoSanitize());
@@ -77,6 +79,7 @@ app.use("/api/v1/google-sheets", googleSheetsRoutes);
 app.use("/api/v1/events", eventRouter);
 app.use("/api/v1/integrations", integrationRoutes);
 app.use("/api/v1/auth", logoutOtpRoutes);
+app.use("/api/v1/cross-sell", crossSellRouter);
 app.use("/uploads/recordings", (req, res, next) => {
   res.header("Cross-Origin-Resource-Policy", "cross-origin");
   next();
