@@ -452,6 +452,7 @@ export const getPaymentStats = asyncHandler(async (req, res) => {
   const { userId: targetUserId } = req.query;
   const organization = req.user.organization;
 
+  // ── OWNED stats (attribution - sirf assignedTo) ──────────────────────
   let matchStage = { organization };
   const accessFilter = await buildAttributionFilter(
     req.user,
@@ -460,16 +461,39 @@ export const getPaymentStats = asyncHandler(async (req, res) => {
   );
   matchStage = applyAttributionFilter(matchStage, accessFilter);
 
-  let involvedMatchStage = { organization };
-  const involvedAccessFilter = await buildVisibilityFilter(
-    req.user,
-    organization,
-    targetUserId,
-  );
-  involvedMatchStage = applyVisibilityFilter(
-    involvedMatchStage,
-    involvedAccessFilter,
-  );
+  // ── INVOLVED stats (assignedTo + coAssignees + recordedBy) ───────────
+  let involvedMatchStage;
+
+  if (targetUserId) {
+    // Specific user select hai — directly query banao teeno ke liye
+    const targetObjId = mongoose.Types.ObjectId.isValid(targetUserId)
+      ? new mongoose.Types.ObjectId(targetUserId)
+      : null;
+
+    const userLeads = await Lead.find({
+      organization,
+      $or: [{ assignedTo: targetUserId }, { coAssignees: targetUserId }],
+    })
+      .select("_id")
+      .lean();
+
+    involvedMatchStage = {
+      organization,
+      $or: [
+        { leadId: { $in: userLeads.map((l) => l._id) } }, // assignedTo + coAssignees
+        ...(targetObjId ? [{ recordedBy: targetObjId }] : []), // recordedBy
+      ],
+    };
+  } else {
+    // No targetUser — normal visibility filter use karo
+    let base = { organization };
+    const involvedAccessFilter = await buildVisibilityFilter(
+      req.user,
+      organization,
+      null,
+    );
+    involvedMatchStage = applyVisibilityFilter(base, involvedAccessFilter);
+  }
 
   const [
     stats,
