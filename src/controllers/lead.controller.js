@@ -1169,71 +1169,29 @@ export const updateLead = asyncHandler(async (req, res) => {
       organization,
     };
 
-    const existingPayment = await Payment.findOne({ leadId: lead._id }).sort({
-      paymentDate: -1,
-      createdAt: -1,
+    await Payment.create(paymentPayload);
+
+    await Activity.create({
+      leadId: lead._id,
+      type: "Payment",
+      text: `Payment recorded: ₹${paymentPayload.amount}${paymentPayload.reference ? ` (${paymentPayload.reference})` : ""}`,
+      paymentAmount: paymentPayload.amount,
+      paymentMode: paymentPayload.paymentMode,
+      paymentStatus: paymentPayload.status,
+      paymentReference: paymentPayload.reference,
+      paymentDate: paymentPayload.paymentDate,
+      createdBy: userId,
+      organization,
     });
 
-    let paymentChanged = false;
-    let isPaymentUpdate = false;
-
-    if (existingPayment) {
-      // Change detect karo
-      const prevDate = existingPayment.paymentDate
-        ? existingPayment.paymentDate.toISOString()
-        : "";
-      const newDate = paymentPayload.paymentDate
-        ? paymentPayload.paymentDate.toISOString()
-        : "";
-
-      paymentChanged =
-        existingPayment.amount !== paymentPayload.amount ||
-        existingPayment.paymentMode !== paymentPayload.paymentMode ||
-        existingPayment.status !== paymentPayload.status ||
-        (existingPayment.reference || "") !==
-          (paymentPayload.reference || "") ||
-        prevDate !== newDate;
-
-      if (paymentChanged) {
-        existingPayment.amount = paymentPayload.amount;
-        existingPayment.paymentMode = paymentPayload.paymentMode;
-        existingPayment.status = paymentPayload.status;
-        existingPayment.reference = paymentPayload.reference;
-        existingPayment.paymentDate = paymentPayload.paymentDate;
-        existingPayment.recordedBy = userId;
-        await existingPayment.save();
-        isPaymentUpdate = true;
-      }
-    } else {
-      await Payment.create(paymentPayload);
-      paymentChanged = true;
-      isPaymentUpdate = false;
-    }
-
-    // Sirf change pe activity + notification
-    if (paymentChanged) {
-      await Activity.create({
-        leadId: lead._id,
-        type: "Payment",
-        text: `Payment ${isPaymentUpdate ? "updated" : "recorded"}: ₹${paymentPayload.amount}${paymentPayload.reference ? ` (${paymentPayload.reference})` : ""}`,
-        paymentAmount: paymentPayload.amount,
-        paymentMode: paymentPayload.paymentMode,
-        paymentStatus: paymentPayload.status,
-        paymentReference: paymentPayload.reference,
-        paymentDate: paymentPayload.paymentDate,
-        createdBy: userId,
-        organization,
-      });
-
-      await sendPaymentNotification({
-        lead,
-        payment: paymentPayload,
-        userId,
-        userName,
-        organization,
-        isUpdate: isPaymentUpdate,
-      });
-    }
+    await sendPaymentNotification({
+      lead,
+      payment: paymentPayload,
+      userId,
+      userName,
+      organization,
+      isUpdate: false,
+    });
   }
 
   // ════════════════════════════════════════════════════════════

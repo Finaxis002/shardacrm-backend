@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Payment from "../models/Payment.model.js";
 import Lead from "../models/Lead.model.js";
 import User from "../models/User.model.js";
@@ -461,7 +462,47 @@ export const getPaymentStats = asyncHandler(async (req, res) => {
   );
   matchStage = applyAttributionFilter(matchStage, accessFilter);
 
-  const [stats, totalPayments, totalAmountAgg] = await Promise.all([
+  const targetUserObjectId =
+    targetUserId && mongoose.Types.ObjectId.isValid(targetUserId)
+      ? new mongoose.Types.ObjectId(targetUserId)
+      : null;
+
+  const involvedMatchStage = targetUserId
+    ? {
+        organization,
+        $or: [
+          {
+            leadId: {
+              $in: (
+                await Lead.find({
+                  organization,
+                  $or: [
+                    { assignedTo: targetUserId },
+                    { coAssignees: targetUserId },
+                  ],
+                })
+                  .select("_id")
+                  .lean()
+              ).map((lead) => lead._id),
+            },
+          },
+          ...(targetUserObjectId ? [{ recordedBy: targetUserObjectId }] : []),
+        ],
+      }
+    : accessFilter.mode === "all"
+      ? { organization }
+      : accessFilter.leadIds?.length
+        ? { organization, leadId: { $in: accessFilter.leadIds } }
+        : { _id: null };
+
+  const [
+    stats,
+    totalPayments,
+    totalAmountAgg,
+    involvedStats,
+    involvedTotalPayments,
+    involvedTotalAmountAgg,
+  ] = await Promise.all([
     Payment.aggregate([
       { $match: matchStage },
       {
@@ -477,6 +518,21 @@ export const getPaymentStats = asyncHandler(async (req, res) => {
       { $match: matchStage },
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]),
+    Payment.aggregate([
+      { $match: involvedMatchStage },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+          totalAmount: { $sum: "$amount" },
+        },
+      },
+    ]),
+    Payment.countDocuments(involvedMatchStage),
+    Payment.aggregate([
+      { $match: involvedMatchStage },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]),
   ]);
 
   res.status(200).json(
@@ -486,6 +542,9 @@ export const getPaymentStats = asyncHandler(async (req, res) => {
         total: totalPayments,
         totalAmount: totalAmountAgg[0]?.total || 0,
         byStatus: stats,
+        involvedTotal: involvedTotalPayments,
+        involvedTotalAmount: involvedTotalAmountAgg[0]?.total || 0,
+        involvedByStatus: involvedStats,
       },
       "Payment statistics fetched successfully",
     ),
