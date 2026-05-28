@@ -19,6 +19,7 @@ const activitySchema = new mongoose.Schema(
         "Payment",
         "Status Change",
         "Lead Reassignment",
+        "Reminder",
       ],
       required: true,
     },

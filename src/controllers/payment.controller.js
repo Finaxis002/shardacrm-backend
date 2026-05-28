@@ -453,8 +453,6 @@ export const getPaymentStats = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
 
   let matchStage = { organization };
-
-  // Use ATTRIBUTION filter (based only on Lead Owner)
   const accessFilter = await buildAttributionFilter(
     req.user,
     organization,
@@ -462,38 +460,16 @@ export const getPaymentStats = asyncHandler(async (req, res) => {
   );
   matchStage = applyAttributionFilter(matchStage, accessFilter);
 
-  const targetUserObjectId =
-    targetUserId && mongoose.Types.ObjectId.isValid(targetUserId)
-      ? new mongoose.Types.ObjectId(targetUserId)
-      : null;
-
-  const involvedMatchStage = targetUserId
-    ? {
-        organization,
-        $or: [
-          {
-            leadId: {
-              $in: (
-                await Lead.find({
-                  organization,
-                  $or: [
-                    { assignedTo: targetUserId },
-                    { coAssignees: targetUserId },
-                  ],
-                })
-                  .select("_id")
-                  .lean()
-              ).map((lead) => lead._id),
-            },
-          },
-          ...(targetUserObjectId ? [{ recordedBy: targetUserObjectId }] : []),
-        ],
-      }
-    : accessFilter.mode === "all"
-      ? { organization }
-      : accessFilter.leadIds?.length
-        ? { organization, leadId: { $in: accessFilter.leadIds } }
-        : { _id: null };
+  let involvedMatchStage = { organization };
+  const involvedAccessFilter = await buildVisibilityFilter(
+    req.user,
+    organization,
+    targetUserId,
+  );
+  involvedMatchStage = applyVisibilityFilter(
+    involvedMatchStage,
+    involvedAccessFilter,
+  );
 
   const [
     stats,
