@@ -1,4 +1,4 @@
-import { CrossSellRule, CrossSellLead, ScheduledEmail } from "../models/CrossSell.model.js";
+import { CrossSellRule, CrossSellLead, ScheduledEmail } from "../models/Crosssell.model.js";
 import Lead from "../models/Lead.model.js";
 import Activity from "../models/Activity.model.js";
 import ApiError from "../utils/apiError.js";
