@@ -452,9 +452,8 @@ export const getPaymentStats = asyncHandler(async (req, res) => {
   const { userId: targetUserId } = req.query;
   const organization = req.user.organization;
 
+  // ── OWNED stats (attribution - sirf assignedTo) ──────────────────────
   let matchStage = { organization };
-
-  // Use ATTRIBUTION filter (based only on Lead Owner)
   const accessFilter = await buildAttributionFilter(
     req.user,
     organization,
@@ -462,38 +461,39 @@ export const getPaymentStats = asyncHandler(async (req, res) => {
   );
   matchStage = applyAttributionFilter(matchStage, accessFilter);
 
-  const targetUserObjectId =
-    targetUserId && mongoose.Types.ObjectId.isValid(targetUserId)
+  // ── INVOLVED stats (assignedTo + coAssignees + recordedBy) ───────────
+  let involvedMatchStage;
+
+  if (targetUserId) {
+    // Specific user select hai — directly query banao teeno ke liye
+    const targetObjId = mongoose.Types.ObjectId.isValid(targetUserId)
       ? new mongoose.Types.ObjectId(targetUserId)
       : null;
 
-  const involvedMatchStage = targetUserId
-    ? {
-        organization,
-        $or: [
-          {
-            leadId: {
-              $in: (
-                await Lead.find({
-                  organization,
-                  $or: [
-                    { assignedTo: targetUserId },
-                    { coAssignees: targetUserId },
-                  ],
-                })
-                  .select("_id")
-                  .lean()
-              ).map((lead) => lead._id),
-            },
-          },
-          ...(targetUserObjectId ? [{ recordedBy: targetUserObjectId }] : []),
-        ],
-      }
-    : accessFilter.mode === "all"
-      ? { organization }
-      : accessFilter.leadIds?.length
-        ? { organization, leadId: { $in: accessFilter.leadIds } }
-        : { _id: null };
+    const userLeads = await Lead.find({
+      organization,
+      $or: [{ assignedTo: targetUserId }, { coAssignees: targetUserId }],
+    })
+      .select("_id")
+      .lean();
+
+    involvedMatchStage = {
+      organization,
+      $or: [
+        { leadId: { $in: userLeads.map((l) => l._id) } }, // assignedTo + coAssignees
+        ...(targetObjId ? [{ recordedBy: targetObjId }] : []), // recordedBy
+      ],
+    };
+  } else {
+    // No targetUser — normal visibility filter use karo
+    let base = { organization };
+    const involvedAccessFilter = await buildVisibilityFilter(
+      req.user,
+      organization,
+      null,
+    );
+    involvedMatchStage = applyVisibilityFilter(base, involvedAccessFilter);
+  }
 
   const [
     stats,

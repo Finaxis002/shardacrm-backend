@@ -712,6 +712,22 @@ export const createLead = asyncHandler(async (req, res) => {
       action: "created",
     });
 
+    await Activity.create({
+      leadId: lead._id,
+      type: "Reminder",
+      text: `Reminder Created: ${reminder.type || "Call"} on ${new Date(
+        reminder.reminderDate,
+      ).toLocaleDateString("en-IN", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      })} at ${reminder.reminderTime || "10:00"}${
+        reminder.note ? ` — ${reminder.note}` : ""
+      }`,
+      createdBy: createdBy,
+      organization,
+    });
+
     const gcalEventId = await createGcalEventForReminder(
       organization,
       reminderItem,
@@ -1229,6 +1245,22 @@ export const updateLead = asyncHandler(async (req, res) => {
           action: "updated",
         });
 
+        await Activity.create({
+          leadId: lead._id,
+          type: "Reminder",
+          text: `Reminder updated: ${reminderData.type || "Call"} on ${new Date(
+            reminderData.reminderDate,
+          ).toLocaleDateString("en-IN", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          })} at ${reminderData.reminderTime || "10:00"}${
+            reminderData.note ? ` — ${reminderData.note}` : ""
+          }`,
+          createdBy: userId,
+          organization,
+        });
+
         // GCal update if date/time changed
         const dateChanged =
           oldDate.toDateString() !==
@@ -1267,6 +1299,22 @@ export const updateLead = asyncHandler(async (req, res) => {
         userName,
         organization,
         action: "created",
+      });
+
+      await Activity.create({
+        leadId: lead._id,
+        type: "Reminder",
+        text: `Reminder Created: ${reminderData.type || "Call"} on ${new Date(
+          reminderData.reminderDate,
+        ).toLocaleDateString("en-IN", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        })} at ${reminderData.reminderTime || "10:00"}${
+          reminderData.note ? ` — ${reminderData.note}` : ""
+        }`,
+        createdBy: userId,
+        organization,
       });
 
       const gcalEventId = await createGcalEventForReminder(
