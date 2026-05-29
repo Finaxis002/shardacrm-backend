@@ -22,11 +22,7 @@ const DEFAULT_SERVICE_CONFIG = { color: "#4f46e5", lightBg: "#eef2ff", accent: "
 
 const generateServiceBanner = (service, config) => {
   const { color, accent, icon } = config;
-  return `<svg xmlns="http://www.w3.org/2000/svg"
-     width="600"
-     height="200"
-     viewBox="0 0 600 200"
-     style="display:block;border:0;outline:none;text-decoration:none;width:100%;height:auto;"> viewBox="0 0 600 200" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%;height:auto;"><defs><linearGradient id="bg${service.replace(/\s/g, '')}" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:${color};stop-opacity:1" /><stop offset="100%" style="stop-color:${accent};stop-opacity:1" /></linearGradient></defs><rect width="600" height="200" rx="12" fill="url(#bg${service.replace(/\s/g, '')})" /><circle cx="520" cy="30" r="80" fill="white" fill-opacity="0.06" /><circle cx="560" cy="120" r="100" fill="white" fill-opacity="0.05" /><circle cx="80" cy="170" r="60" fill="white" fill-opacity="0.07" /><circle cx="30" cy="40" r="40" fill="white" fill-opacity="0.05" /><circle cx="420" cy="60" r="2" fill="white" fill-opacity="0.2" /><circle cx="450" cy="60" r="2" fill="white" fill-opacity="0.2" /><circle cx="480" cy="60" r="2" fill="white" fill-opacity="0.2" /><circle cx="420" cy="90" r="2" fill="white" fill-opacity="0.2" /><circle cx="450" cy="90" r="2" fill="white" fill-opacity="0.2" /><circle cx="480" cy="90" r="2" fill="white" fill-opacity="0.2" /><circle cx="420" cy="120" r="2" fill="white" fill-opacity="0.2" /><circle cx="450" cy="120" r="2" fill="white" fill-opacity="0.2" /><circle cx="480" cy="120" r="2" fill="white" fill-opacity="0.2" /><rect x="40" y="50" width="80" height="80" rx="20" fill="white" fill-opacity="0.15" /><text x="80" y="105" text-anchor="middle" font-size="40" font-family="Apple Color Emoji, Segoe UI Emoji, sans-serif">${icon}</text><rect x="150" y="55" width="130" height="26" rx="13" fill="white" fill-opacity="0.2" /><text x="215" y="72" text-anchor="middle" font-size="11" font-weight="600" fill="white" font-family="Arial, sans-serif" letter-spacing="0.5">${config.badge.toUpperCase()}</text><text x="150" y="115" font-size="26" font-weight="700" fill="white" font-family="Arial, sans-serif">${service}</text><text x="150" y="142" font-size="13" fill="white" fill-opacity="0.85" font-family="Arial, sans-serif">${config.tagline}</text><text x="560" y="188" text-anchor="end" font-size="11" fill="white" fill-opacity="0.5" font-family="Arial, sans-serif">ShardaCRM</text></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200" viewBox="0 0 600 200" style="display:block;border:0;outline:none;text-decoration:none;width:100%;height:auto;"><defs><linearGradient id="bg${service.replace(/\s/g, '')}" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:${color};stop-opacity:1" /><stop offset="100%" style="stop-color:${accent};stop-opacity:1" /></linearGradient></defs><rect width="600" height="200" rx="12" fill="url(#bg${service.replace(/\s/g, '')})" /><circle cx="520" cy="30" r="80" fill="white" fill-opacity="0.06" /><circle cx="560" cy="120" r="100" fill="white" fill-opacity="0.05" /><circle cx="80" cy="170" r="60" fill="white" fill-opacity="0.07" /><circle cx="30" cy="40" r="40" fill="white" fill-opacity="0.05" /><circle cx="420" cy="60" r="2" fill="white" fill-opacity="0.2" /><circle cx="450" cy="60" r="2" fill="white" fill-opacity="0.2" /><circle cx="480" cy="60" r="2" fill="white" fill-opacity="0.2" /><circle cx="420" cy="90" r="2" fill="white" fill-opacity="0.2" /><circle cx="450" cy="90" r="2" fill="white" fill-opacity="0.2" /><circle cx="480" cy="90" r="2" fill="white" fill-opacity="0.2" /><circle cx="420" cy="120" r="2" fill="white" fill-opacity="0.2" /><circle cx="450" cy="120" r="2" fill="white" fill-opacity="0.2" /><circle cx="480" cy="120" r="2" fill="white" fill-opacity="0.2" /><rect x="40" y="50" width="80" height="80" rx="20" fill="white" fill-opacity="0.15" /><text x="80" y="105" text-anchor="middle" font-size="40" font-family="Apple Color Emoji, Segoe UI Emoji, sans-serif">${icon}</text><rect x="150" y="55" width="130" height="26" rx="13" fill="white" fill-opacity="0.2" /><text x="215" y="72" text-anchor="middle" font-size="11" font-weight="600" fill="white" font-family="Arial, sans-serif" letter-spacing="0.5">${config.badge.toUpperCase()}</text><text x="150" y="115" font-size="26" font-weight="700" fill="white" font-family="Arial, sans-serif">${service}</text><text x="150" y="142" font-size="13" fill="white" fill-opacity="0.85" font-family="Arial, sans-serif">${config.tagline}</text><text x="560" y="188" text-anchor="end" font-size="11" fill="white" fill-opacity="0.5" font-family="Arial, sans-serif">ShardaCRM</text></svg>`;
 };
 
 const SERVICE_BENEFITS = {
@@ -474,14 +470,56 @@ export const sendAutomation = asyncHandler(async (req, res) => {
       otherServices: otherServices,
     });
 
-    const subject = `Special offer for ${lead.name.split(" ")[0] || "you"} — ${mainRec.service} 🎯`;
+const subject = `Special offer for ${lead.name.split(" ")[0] || "you"} — ${mainRec.service} 🎯`;
+
+// ─── Atomic lock ──────────────────
+const lockResult = await CrossSellLead.findOneAndUpdate(
+  {
+    leadId,
+    organization,
+    $or: [
+      { automationSent: false },
+      { automationSent: { $exists: false } },
+      { automationSentAt: { $lt: new Date(Date.now() - 30000) } }
+    ]
+  },
+  {
+    $set: {
+      automationSent: true,
+      automationSentAt: new Date(),
+      assignedTo: lead.assignedTo,
+      originalService: lead.product || "",
+    },
+    $setOnInsert: {
+      leadId,
+      organization,
+      createdBy: userId,
+      recommendations: pendingRecs.map(r => ({
+        service: r.service,
+        pitch: r.pitch,
+        status: "Pending",
+      })),
+    }
+  },
+  { upsert: true, new: false }
+);
+
+if (lockResult && lockResult.automationSent === true) {
+  return res.status(200).json(
+    new ApiResponse(200, { sent: true, channel }, "Already sent recently")
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────
+
+    await ScheduledEmail.updateMany(
+      { leadId, organization, status: "pending" },
+      { $set: { status: "cancelled" } }
+    );
 
     try {
       await sendEmail({ to: lead.email, subject, html });
 
-      // --------------------------------------------------------------
-      // 2. Agar pehle se CrossSellLead nahi tha, to ab bana do (taaki future responses kaam karein)
-      // --------------------------------------------------------------
+    
       if (!crossSellRecord) {
         const newRecord = new CrossSellLead({
           leadId,
