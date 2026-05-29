@@ -11,7 +11,7 @@ import {
   getScheduledEmails,
   cancelScheduledEmail,
   getLeadsOverview,
-} from "../controllers/crossSell.controller.js";
+} from "../controllers/Crosssell.controller.js";
 import { verifyJWT } from "../middleware/auth.middleware.js";
 
 const router = Router();
