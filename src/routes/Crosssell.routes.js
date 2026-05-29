@@ -10,6 +10,7 @@ import {
   scheduleEmail,
   getScheduledEmails,
   cancelScheduledEmail,
+  getLeadsOverview,
 } from "../controllers/crossSell.controller.js";
 import { verifyJWT } from "../middleware/auth.middleware.js";
 
@@ -23,6 +24,7 @@ router.post("/schedule-email/:leadId", scheduleEmail);
 router.get("/scheduled-emails/:leadId", getScheduledEmails);
 router.delete("/scheduled-emails/:emailId", cancelScheduledEmail);
 router.get("/dashboard", getDashboard);
+router.get("/leads-overview", getLeadsOverview);
 router.get("/rules", getRules);
 router.post("/rules", createRule);
 router.put("/rules/:ruleId", updateRule);

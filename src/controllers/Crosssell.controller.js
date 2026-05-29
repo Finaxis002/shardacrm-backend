@@ -22,7 +22,11 @@ const DEFAULT_SERVICE_CONFIG = { color: "#4f46e5", lightBg: "#eef2ff", accent: "
 
 const generateServiceBanner = (service, config) => {
   const { color, accent, icon } = config;
-  return `<svg width="600" height="200" viewBox="0 0 600 200" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%;height:auto;"><defs><linearGradient id="bg${service.replace(/\s/g, '')}" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:${color};stop-opacity:1" /><stop offset="100%" style="stop-color:${accent};stop-opacity:1" /></linearGradient></defs><rect width="600" height="200" rx="12" fill="url(#bg${service.replace(/\s/g, '')})" /><circle cx="520" cy="30" r="80" fill="white" fill-opacity="0.06" /><circle cx="560" cy="120" r="100" fill="white" fill-opacity="0.05" /><circle cx="80" cy="170" r="60" fill="white" fill-opacity="0.07" /><circle cx="30" cy="40" r="40" fill="white" fill-opacity="0.05" /><circle cx="420" cy="60" r="2" fill="white" fill-opacity="0.2" /><circle cx="450" cy="60" r="2" fill="white" fill-opacity="0.2" /><circle cx="480" cy="60" r="2" fill="white" fill-opacity="0.2" /><circle cx="420" cy="90" r="2" fill="white" fill-opacity="0.2" /><circle cx="450" cy="90" r="2" fill="white" fill-opacity="0.2" /><circle cx="480" cy="90" r="2" fill="white" fill-opacity="0.2" /><circle cx="420" cy="120" r="2" fill="white" fill-opacity="0.2" /><circle cx="450" cy="120" r="2" fill="white" fill-opacity="0.2" /><circle cx="480" cy="120" r="2" fill="white" fill-opacity="0.2" /><rect x="40" y="50" width="80" height="80" rx="20" fill="white" fill-opacity="0.15" /><text x="80" y="105" text-anchor="middle" font-size="40" font-family="Apple Color Emoji, Segoe UI Emoji, sans-serif">${icon}</text><rect x="150" y="55" width="130" height="26" rx="13" fill="white" fill-opacity="0.2" /><text x="215" y="72" text-anchor="middle" font-size="11" font-weight="600" fill="white" font-family="Arial, sans-serif" letter-spacing="0.5">${config.badge.toUpperCase()}</text><text x="150" y="115" font-size="26" font-weight="700" fill="white" font-family="Arial, sans-serif">${service}</text><text x="150" y="142" font-size="13" fill="white" fill-opacity="0.85" font-family="Arial, sans-serif">${config.tagline}</text><text x="560" y="188" text-anchor="end" font-size="11" fill="white" fill-opacity="0.5" font-family="Arial, sans-serif">ShardaCRM</text></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg"
+     width="600"
+     height="200"
+     viewBox="0 0 600 200"
+     style="display:block;border:0;outline:none;text-decoration:none;width:100%;height:auto;"> viewBox="0 0 600 200" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%;height:auto;"><defs><linearGradient id="bg${service.replace(/\s/g, '')}" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:${color};stop-opacity:1" /><stop offset="100%" style="stop-color:${accent};stop-opacity:1" /></linearGradient></defs><rect width="600" height="200" rx="12" fill="url(#bg${service.replace(/\s/g, '')})" /><circle cx="520" cy="30" r="80" fill="white" fill-opacity="0.06" /><circle cx="560" cy="120" r="100" fill="white" fill-opacity="0.05" /><circle cx="80" cy="170" r="60" fill="white" fill-opacity="0.07" /><circle cx="30" cy="40" r="40" fill="white" fill-opacity="0.05" /><circle cx="420" cy="60" r="2" fill="white" fill-opacity="0.2" /><circle cx="450" cy="60" r="2" fill="white" fill-opacity="0.2" /><circle cx="480" cy="60" r="2" fill="white" fill-opacity="0.2" /><circle cx="420" cy="90" r="2" fill="white" fill-opacity="0.2" /><circle cx="450" cy="90" r="2" fill="white" fill-opacity="0.2" /><circle cx="480" cy="90" r="2" fill="white" fill-opacity="0.2" /><circle cx="420" cy="120" r="2" fill="white" fill-opacity="0.2" /><circle cx="450" cy="120" r="2" fill="white" fill-opacity="0.2" /><circle cx="480" cy="120" r="2" fill="white" fill-opacity="0.2" /><rect x="40" y="50" width="80" height="80" rx="20" fill="white" fill-opacity="0.15" /><text x="80" y="105" text-anchor="middle" font-size="40" font-family="Apple Color Emoji, Segoe UI Emoji, sans-serif">${icon}</text><rect x="150" y="55" width="130" height="26" rx="13" fill="white" fill-opacity="0.2" /><text x="215" y="72" text-anchor="middle" font-size="11" font-weight="600" fill="white" font-family="Arial, sans-serif" letter-spacing="0.5">${config.badge.toUpperCase()}</text><text x="150" y="115" font-size="26" font-weight="700" fill="white" font-family="Arial, sans-serif">${service}</text><text x="150" y="142" font-size="13" fill="white" fill-opacity="0.85" font-family="Arial, sans-serif">${config.tagline}</text><text x="560" y="188" text-anchor="end" font-size="11" fill="white" fill-opacity="0.5" font-family="Arial, sans-serif">ShardaCRM</text></svg>`;
 };
 
 const SERVICE_BENEFITS = {
@@ -105,7 +109,13 @@ const buildCrossSellEmailTemplate = ({ leadName, originalService, recommendedSer
 
 <tr><td style="background:${config.color};padding:12px 40px;"><table width="100%" cellpadding="0" cellspacing="0"><tr><td><p style="margin:0;font-size:13px;font-weight:700;color:white;letter-spacing:0.05em;">ShardaCRM</p></td><td align="right"><p style="margin:0;font-size:12px;color:rgba(255,255,255,0.7);">Specially curated for you</p></td></tr></table></td></tr>
 
-<tr><td style="padding:0;line-height:0;">${bannerSvg}</td></tr>
+<tr>
+  <td style="padding:0;font-size:0;line-height:0;">
+    <div style="display:block;width:100%;overflow:hidden;">
+      ${bannerSvg}
+    </div>
+  </td>
+</tr>
 
 <tr><td style="padding:36px 40px 24px;">
   <p style="margin:0 0 8px;font-size:22px;font-weight:700;color:#0f172a;line-height:1.3;">Hello ${leadName}! 👋</p>
@@ -796,4 +806,33 @@ export const cancelScheduledEmail = asyncHandler(async (req, res) => {
   await mail.save();
 
   res.status(200).json(new ApiResponse(200, mail, "Scheduled email cancelled"));
+});
+// GET /api/v1/cross-sell/leads-overview
+export const getLeadsOverview = asyncHandler(async (req, res) => {
+  const { organization } = req.user;
+  const { userId, page = 1, limit = 20 } = req.query;
+
+  const matchStage = { organization: new mongoose.Types.ObjectId(organization) };
+  if (userId) matchStage.assignedTo = new mongoose.Types.ObjectId(userId);
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const total = await CrossSellLead.countDocuments(matchStage);
+
+  const records = await CrossSellLead.find(matchStage)
+    .sort({ updatedAt: -1 })
+    .skip(skip)
+    .limit(parseInt(limit))
+    .populate("leadId", "name phone product email")
+    .populate("assignedTo", "name")
+    .lean();
+
+  res.status(200).json(new ApiResponse(200, {
+    data: records,
+    pagination: {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      total,
+      totalPages: Math.ceil(total / parseInt(limit)),
+    }
+  }, "Leads overview fetched"));
 });
