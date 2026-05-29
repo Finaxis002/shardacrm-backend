@@ -1,5 +1,5 @@
 import cron from "node-cron";
-import { ScheduledEmail } from "../models/CrossSell.model.js";
+import { ScheduledEmail } from "../models/Crosssell.model.js";
 import sendEmail from "./sendEmail.js";
 
 const startEmailScheduler = () => {
