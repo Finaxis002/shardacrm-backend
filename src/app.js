@@ -25,7 +25,7 @@ import logoutOtpRoutes from "./routes/Logoutotp.route.js";
 import metaWebhookRoutes from "./routes/metaWebhook.routes.js";
 import { fileURLToPath } from "url";
 import path from "path";
-import crossSellRouter from "./routes/crossSell.routes.js";
+import crossSellRouter from "./routes/Crosssell.routes.js";
 import startEmailScheduler from "./utils/emailScheduler.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
