@@ -99,7 +99,7 @@ const scheduledEmailSchema = new mongoose.Schema(
     subject: { type: String, default: "" },
     html: { type: String, default: "" },
     scheduledAt: { type: Date, required: true },
-    status: { type: String, enum: ["pending", "sent", "failed", "cancelled"], default: "pending" },
+    status: { type: String, enum: ["pending", "processing", "sent", "failed", "cancelled"], default: "pending" },
     sentAt: { type: Date, default: null },
     error: { type: String, default: "" },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
