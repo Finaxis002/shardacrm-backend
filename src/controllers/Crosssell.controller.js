@@ -284,8 +284,12 @@ export const getRecommendations = asyncHandler(async (req, res) => {
         .sort((a, b) => (b.priority || 0) - (a.priority || 0))
     : [];
 
+ // Agar existing record hai to uske saare recommendations lo
+  const allExistingRecs = existing?.recommendations || [];
+  
+  // Active rules se recommendations
   const merged = activeRecs.map((rec) => {
-    const existingRec = existing?.recommendations?.find(
+    const existingRec = allExistingRecs.find(
       (er) => er.service === rec.service
     );
     return {
@@ -296,6 +300,21 @@ export const getRecommendations = asyncHandler(async (req, res) => {
       notes: existingRec?.notes || "",
       _id: existingRec?._id || null,
     };
+  });
+
+
+  allExistingRecs.forEach((existingRec) => {
+    const alreadyInMerged = merged.find(m => m.service === existingRec.service);
+    if (!alreadyInMerged) {
+      merged.push({
+        service: existingRec.service,
+        pitch: "",
+        status: existingRec.status || "Pending",
+        respondedAt: existingRec.respondedAt || null,
+        notes: existingRec.notes || "",
+        _id: existingRec._id || null,
+      });
+    }
   });
 
   res.status(200).json(
@@ -309,6 +328,206 @@ export const getRecommendations = asyncHandler(async (req, res) => {
   );
 });
 
+export const getSuccessLeads = asyncHandler(async (req, res) => {
+  const { organization } = req.user;
+  const { page = 1, limit = 20, userId } = req.query;
+ const allLeads = await Lead.find({ organization }).select("name status").limit(10).lean();
+ 
+  const matchStage = {
+    organization: new mongoose.Types.ObjectId(organization),
+    status: "Success",
+  };
+ 
+  if (userId) {
+    matchStage.assignedTo = new mongoose.Types.ObjectId(userId);
+  } else if (req.user.role !== "admin") {
+    matchStage.assignedTo = new mongoose.Types.ObjectId(req.user._id);
+  }
+ 
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  const total = await Lead.countDocuments(matchStage);
+ 
+  const leads = await Lead.find(matchStage)
+    .sort({ updatedAt: -1 })
+    .skip(skip)
+    .limit(parseInt(limit))
+    .populate("assignedTo", "name email")
+    .lean();
+ 
+  
+  const leadIds = leads.map((l) => l._id);
+  const crossSellRecords = await CrossSellLead.find({
+    leadId: { $in: leadIds },
+    organization,
+  }).lean();
+ 
+  const crossSellMap = {};
+  crossSellRecords.forEach((r) => {
+    crossSellMap[r.leadId.toString()] = r;
+  });
+ 
+  const enrichedLeads = leads.map((lead) => ({
+    ...lead,
+    crossSell: crossSellMap[lead._id.toString()] || null,
+  }));
+ 
+  res.status(200).json(
+    new ApiResponse(200, {
+      data: enrichedLeads,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / parseInt(limit)),
+      },
+    }, "Success leads fetched")
+  );
+});
+ 
+// ─── POST /api/v1/cross-sell/assign-services/:leadId ─────────────────────────
+
+export const assignServices = asyncHandler(async (req, res) => {
+  const { leadId } = req.params;
+  const { services, markLeadRepeat } = req.body;
+  const { organization, _id: userId } = req.user;
+ 
+  // services = [
+  //   { service: "GST Registration", willProvide: true, scheduleEmail: { scheduledAt: "...", message: "..." } },
+  //   { service: "MSME", willProvide: false },
+  // ]
+ 
+  if (!services || !Array.isArray(services) || services.length === 0) {
+    throw new ApiError(400, "services array is required");
+  }
+ 
+  const lead = await Lead.findOne({ _id: leadId, organization });
+  if (!lead) throw new ApiError(404, "Lead not found");
+ 
+  // CrossSellLead record 
+  let crossSellRecord = await CrossSellLead.findOne({ leadId, organization });
+ 
+  const servicesToProvide = services.filter((s) => s.willProvide);
+ 
+  if (!crossSellRecord) {
+    crossSellRecord = new CrossSellLead({
+      leadId,
+      organization,
+      assignedTo: lead.assignedTo,
+      originalService: lead.product || "",
+      createdBy: userId,
+      recommendations: services
+  .filter((s) => s.willProvide)
+  .map((s) => ({
+    service: s.service,
+    status: "Interested",
+    respondedAt: new Date(),
+    respondedBy: userId,
+  })),
+    });
+  } else {
+    // Existing record update 
+    services.forEach((s) => {
+  if (!s.willProvide) return; 
+  
+  const existing = crossSellRecord.recommendations.find(
+    (r) => r.service === s.service
+  );
+  if (existing) {
+    existing.status = "Interested";
+    existing.respondedAt = new Date();
+    existing.respondedBy = userId;
+  } else {
+    crossSellRecord.recommendations.push({
+      service: s.service,
+      status: "Interested",
+      respondedAt: new Date(),
+      respondedBy: userId,
+    });
+  }
+});
+  }
+ 
+  await crossSellRecord.save();
+ 
+  // Schedule emails for selected services
+  const scheduledEmails = [];
+  for (const s of servicesToProvide) {
+    if (s.scheduleEmail?.scheduledAt) {
+      const schedDate = new Date(s.scheduleEmail.scheduledAt);
+      if (isNaN(schedDate) || schedDate <= new Date()) continue;
+ 
+      const config = SERVICE_CONFIG[s.service] || DEFAULT_SERVICE_CONFIG;
+      const benefits = SERVICE_BENEFITS[s.service] || DEFAULT_BENEFITS;
+ 
+      // Get pitch from rules
+      let pitch = `${s.service} is a great addition to your business journey.`;
+      const rule = await CrossSellRule.findOne({
+        organization,
+        "recommendations.service": s.service,
+      }).lean();
+      if (rule?.recommendations) {
+        const rec = rule.recommendations.find((r) => r.service === s.service);
+        if (rec?.pitch) pitch = rec.pitch;
+      }
+ 
+      const html = buildCrossSellEmailTemplate({
+        leadName: lead.name,
+        originalService: lead.product || "our service",
+        recommendedService: s.service,
+        pitch,
+        customMessage: s.scheduleEmail.message || "",
+        includeOtherServices: false,
+        otherServices: [],
+      });
+ 
+      const subject = `Special offer for ${lead.name.split(" ")[0] || "you"} — ${s.service} 🎯`;
+ 
+      const mail = await ScheduledEmail.create({
+        leadId,
+        organization,
+        to: lead.email,
+        subject,
+        html,
+        scheduledAt: schedDate,
+        status: "pending",
+        createdBy: userId,
+      });
+ 
+      scheduledEmails.push(mail);
+    }
+  }
+ 
+  // Lead status Repeat 
+  if (markLeadRepeat && servicesToProvide.length > 0) {
+    lead.status = "Repeat";
+    await lead.save();
+ 
+    await Activity.create({
+      leadId,
+      type: "Note",
+      text: `🔄 Lead status changed to Repeat after cross-sell services assigned: ${servicesToProvide.map((s) => s.service).join(", ")}`,
+      createdBy: userId,
+      organization,
+    });
+  }
+ 
+  // Activity log
+  await Activity.create({
+    leadId,
+    type: "Note",
+    text: `📋 Cross-sell services manually assigned — Providing: ${servicesToProvide.map((s) => s.service).join(", ") || "none"}`,
+    createdBy: userId,
+    organization,
+  });
+ 
+  res.status(200).json(
+    new ApiResponse(200, {
+      crossSellRecord,
+      scheduledEmails,
+      leadStatusUpdated: markLeadRepeat && servicesToProvide.length > 0,
+    }, "Services assigned successfully")
+  );
+});
 // ─── POST /api/v1/cross-sell/respond ─────────────────────────────────────────
 export const respondToRecommendation = asyncHandler(async (req, res) => {
   const { leadId, service, status, notes } = req.body;
@@ -407,7 +626,7 @@ export const sendAutomation = asyncHandler(async (req, res) => {
     if (!lead.email) throw new ApiError(400, "Lead does not have an email address");
 
     // --------------------------------------------------------------
-    // 1. Agar CrossSellLead record nahi hai, to rules se recommendations lo
+    // 1. Agar CrossSellLead record 
     // --------------------------------------------------------------
     let crossSellRecord = await CrossSellLead.findOne({ leadId, organization }).lean();
     let pendingRecs = [];
@@ -418,9 +637,9 @@ export const sendAutomation = asyncHandler(async (req, res) => {
       );
     }
 
-    // Agar record nahi hai ya usme koi pending/interested nahi hai, to rules se generate karo
+    
     if (!pendingRecs.length) {
-      // Rules fetch karo
+      // Rules fetch
       await seedDefaultRules(organization, userId);
       const productName = (lead.product || "").trim();
       let rule = await CrossSellRule.findOne({

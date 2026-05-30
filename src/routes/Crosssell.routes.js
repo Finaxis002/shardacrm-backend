@@ -11,6 +11,8 @@ import {
   getScheduledEmails,
   cancelScheduledEmail,
   getLeadsOverview,
+  getSuccessLeads,     
+  assignServices, 
 } from "../controllers/Crosssell.controller.js";
 import { verifyJWT } from "../middleware/auth.middleware.js";
 
@@ -28,5 +30,6 @@ router.get("/leads-overview", getLeadsOverview);
 router.get("/rules", getRules);
 router.post("/rules", createRule);
 router.put("/rules/:ruleId", updateRule);
-
+router.get("/success-leads", getSuccessLeads);        
+router.post("/assign-services/:leadId", assignServices);
 export default router;
