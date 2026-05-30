@@ -583,8 +583,8 @@ export const createLead = asyncHandler(async (req, res) => {
       senderId: createdBy,
       organization,
       leadId: lead._id,
-      title: `Lead Created: ${lead.name}`,
-      message: `${req.user.name} created a new lead ${lead.name}.`,
+      title: `New Lead Assigned: ${lead.name}`,
+      message: `A new lead "${lead.name}" has been assigned to you.`,
       type: "lead_created",
       actionUrl: `/leads/${lead._id}`,
     });

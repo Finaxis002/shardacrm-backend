@@ -85,7 +85,6 @@ export const buildLeadRecipients = (lead, extraIds = []) => {
     ...(Array.isArray(lead.coAssignees)
       ? lead.coAssignees.map((id) => extractId(id))
       : []),
-    extractId(lead.createdBy),
     ...extraIds.map((id) => extractId(id)),
   ];
   return [...new Set(ids.filter(Boolean))];
