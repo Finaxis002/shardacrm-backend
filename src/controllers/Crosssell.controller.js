@@ -266,7 +266,7 @@ export const assignServices = asyncHandler(async (req, res) => {
   .filter((s) => s.willProvide)
   .map((s) => ({
     service: s.service,
-    status: "Interested",
+    status: "Pending",
     respondedAt: new Date(),
     respondedBy: userId,
   })),
@@ -280,13 +280,13 @@ export const assignServices = asyncHandler(async (req, res) => {
     (r) => r.service === s.service
   );
   if (existing) {
-    existing.status = "Interested";
+    // existing.status = "Interested";
     existing.respondedAt = new Date();
     existing.respondedBy = userId;
   } else {
     crossSellRecord.recommendations.push({
       service: s.service,
-      status: "Interested",
+      status: "Pending",
       respondedAt: new Date(),
       respondedBy: userId,
     });
