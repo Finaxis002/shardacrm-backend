@@ -278,27 +278,19 @@ export const getLeadActivities = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Lead not found");
   }
 
-  const {
-    skip,
-    limit: pageLimit,
-    page: pageNum,
-  } = parsePagination({ page, limit });
+const activities = await Activity.find({ leadId, organization })
+  .populate("createdBy", "name email")
+  .sort({ updatedAt: -1, createdAt: -1 })
+  .lean();
 
-  const activities = await Activity.find({ leadId, organization })
-    .skip(skip)
-    .limit(pageLimit)
-    .populate("createdBy", "name email")
-    .sort({ updatedAt: -1, createdAt: -1 })
-    .lean();
-
-  const total = await Activity.countDocuments({ leadId, organization });
+const total = activities.length;
 
   res
     .status(200)
     .json(
       new ApiResponse(
         200,
-        formatPaginatedResponse(activities, total, pageNum, pageLimit),
+        activities,
         "Lead activities fetched successfully",
       ),
     );
