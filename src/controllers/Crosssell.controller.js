@@ -936,6 +936,9 @@ export const updateRule = asyncHandler(async (req, res) => {
     }));
   }
   if (isActive !== undefined) rule.isActive = isActive;
+  if (triggerService !== undefined) {
+  rule.triggerService = triggerService.trim();
+}
 
   await rule.save();
   res.status(200).json(new ApiResponse(200, rule, "Rule updated"));
@@ -945,8 +948,8 @@ export const createRule = asyncHandler(async (req, res) => {
   const { triggerService, recommendations } = req.body;
   const { organization, _id: userId } = req.user;
 
-  if (!triggerService || !recommendations?.length) {
-    throw new ApiError(400, "triggerService and recommendations required");
+if (!triggerService) {
+    throw new ApiError(400, "triggerService is required");
   }
 
   let rule = await CrossSellRule.findOne({ organization, triggerService });
@@ -1092,4 +1095,21 @@ export const getLeadsOverview = asyncHandler(async (req, res) => {
       totalPages: Math.ceil(total / parseInt(limit)),
     }
   }, "Leads overview fetched"));
+});
+export const deleteRule = asyncHandler(async (req, res) => {
+  const { ruleId } = req.params;
+  const { organization } = req.user;
+
+  const rule = await CrossSellRule.findOneAndDelete({
+    _id: ruleId,
+    organization,
+  });
+
+  if (!rule) {
+    throw new ApiError(404, "Rule not found");
+  }
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, {}, "Rule deleted"));
 });
