@@ -13,6 +13,7 @@ import {
   getLeadsOverview,
   getSuccessLeads,     
   assignServices, 
+  deleteRule,
 } from "../controllers/Crosssell.controller.js";
 import { verifyJWT } from "../middleware/auth.middleware.js";
 
@@ -25,6 +26,7 @@ router.post("/send-automation/:leadId", sendAutomation);
 router.post("/schedule-email/:leadId", scheduleEmail);
 router.get("/scheduled-emails/:leadId", getScheduledEmails);
 router.delete("/scheduled-emails/:emailId", cancelScheduledEmail);
+router.delete("/rules/:ruleId", deleteRule);
 router.get("/dashboard", getDashboard);
 router.get("/leads-overview", getLeadsOverview);
 router.get("/rules", getRules);
