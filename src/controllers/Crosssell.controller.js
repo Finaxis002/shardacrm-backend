@@ -185,11 +185,15 @@ export const getSuccessLeads = asyncHandler(async (req, res) => {
     status: "Success",
   };
  
-  if (userId) {
-    matchStage.assignedTo = new mongoose.Types.ObjectId(userId);
-  } else if (req.user.role !== "admin") {
-    matchStage.assignedTo = new mongoose.Types.ObjectId(req.user._id);
-  }
+if (userId) {
+  matchStage.assignedTo = new mongoose.Types.ObjectId(userId);
+} else if (
+  req.user.role !== "admin" &&
+  req.user.role !== "tl" &&
+  req.user.role !== "manager"
+) {
+  matchStage.assignedTo = new mongoose.Types.ObjectId(req.user._id);
+}
  
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const total = await Lead.countDocuments(matchStage);
@@ -659,9 +663,16 @@ const { dateFrom, dateTo, userId } = req.query;
     dateFilter.$lte = end;
   }
 
-  const matchStage = { organization: new mongoose.Types.ObjectId(organization) };
-  if (userId) {
+const matchStage = {
+  organization: new mongoose.Types.ObjectId(organization),
+};
+
+if (userId) {
   matchStage.assignedTo = new mongoose.Types.ObjectId(userId);
+} else if (
+  !["admin", "tl", "manager"].includes(req.user.role)
+) {
+  matchStage.assignedTo = new mongoose.Types.ObjectId(req.user._id);
 }
   if (dateFrom || dateTo) matchStage.createdAt = dateFilter;
 
@@ -674,7 +685,7 @@ const { dateFrom, dateTo, userId } = req.query;
   ]);
 
   const topServices = await CrossSellLead.aggregate([
-    { $match: matchStage },
+    { $match: matchStage }, 
     { $unwind: "$recommendations" },
     { $match: { "recommendations.status": { $in: ["Interested", "Converted"] } } },
     { $group: { _id: "$recommendations.service", count: { $sum: 1 } } },
@@ -884,6 +895,32 @@ export const scheduleEmail = asyncHandler(async (req, res) => {
     createdBy: userId,
   });
 
+ if (leadId && recommendationService) {
+    let crossSellRecord = await CrossSellLead.findOne({ leadId, organization });
+    if (!crossSellRecord) {
+      crossSellRecord = new CrossSellLead({
+        leadId,
+        organization,
+        assignedTo: lead?.assignedTo,
+        originalService: lead?.product || "",
+        createdBy: userId,
+        recommendations: [],
+      });
+    }
+    const exists = crossSellRecord.recommendations.find(
+      (r) => r.service === recommendationService
+    );
+    if (!exists) {
+      crossSellRecord.recommendations.push({
+        service: recommendationService,
+        status: "Pending",
+        respondedAt: new Date(),
+        respondedBy: userId,
+      });
+      await crossSellRecord.save();
+    }
+  }
+
   res.status(201).json(new ApiResponse(201, mail, "Email scheduled"));
 });
 
@@ -919,8 +956,17 @@ export const getLeadsOverview = asyncHandler(async (req, res) => {
   const { organization } = req.user;
   const { userId, page = 1, limit = 20 } = req.query;
 
-  const matchStage = { organization: new mongoose.Types.ObjectId(organization) };
-  if (userId) matchStage.assignedTo = new mongoose.Types.ObjectId(userId);
+const matchStage = {
+  organization: new mongoose.Types.ObjectId(organization),
+};
+
+if (userId) {
+  matchStage.assignedTo = new mongoose.Types.ObjectId(userId);
+} else if (
+  !["admin", "tl", "manager"].includes(req.user.role)
+) {
+  matchStage.assignedTo = new mongoose.Types.ObjectId(req.user._id);
+}
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const total = await CrossSellLead.countDocuments(matchStage);

@@ -39,17 +39,18 @@ import {
  */
 export const getLeads = asyncHandler(async (req, res) => {
   const {
-    page,
-    limit,
-    status,
-    source,
-    assignedTo,
-    search,
-    priority,
-    dateFrom,
-    dateTo,
-    dateFilterType,
-  } = req.query;
+  page,
+  limit,
+  status,
+  source,
+  assignedTo,
+  coAssignedTo,
+  search,
+  priority,
+  dateFrom,
+  dateTo,
+  dateFilterType,
+} = req.query;
 
   const userId = req.user._id;
   const organization = req.user.organization;
@@ -91,7 +92,12 @@ export const getLeads = asyncHandler(async (req, res) => {
   if (priority) {
     queryConditions.push({ priority });
   }
-
+// Co-Assignee Filter
+if (coAssignedTo) {
+  queryConditions.push({
+    coAssignees: new mongoose.Types.ObjectId(coAssignedTo),
+  });
+}
   // Date Range Filter
   if (dateFrom || dateTo) {
     const dateField =
@@ -483,6 +489,7 @@ export const createLead = asyncHandler(async (req, res) => {
     product,
     closeDate,
     priority,
+    coAssignedTo,
     note,
     assignedTo,
     coAssignees = [],
@@ -1760,15 +1767,16 @@ export const bulkAssignLeads = asyncHandler(async (req, res) => {
  */
 export const getLeadIds = asyncHandler(async (req, res) => {
   const {
-    status,
-    source,
-    assignedTo,
-    search,
-    priority,
-    dateFrom,
-    dateTo,
-    dateFilterType,
-  } = req.query;
+  status,
+  source,
+  assignedTo,
+  coAssignedTo,
+  search,
+  priority,
+  dateFrom,
+  dateTo,
+  dateFilterType,
+} = req.query;
 
   const userId = req.user._id;
   const organization = req.user.organization;
@@ -1789,7 +1797,9 @@ export const getLeadIds = asyncHandler(async (req, res) => {
 
   if (source) filter.source = source;
   if (priority) filter.priority = priority;
-
+if (coAssignedTo) {
+  filter.coAssignees = new mongoose.Types.ObjectId(coAssignedTo);
+}
   if (dateFrom || dateTo) {
     const dateField =
       dateFilterType === "closeDate" ? "closeDate" : "createdAt";
