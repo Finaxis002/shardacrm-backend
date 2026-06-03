@@ -39,18 +39,18 @@ import {
  */
 export const getLeads = asyncHandler(async (req, res) => {
   const {
-  page,
-  limit,
-  status,
-  source,
-  assignedTo,
-  coAssignedTo,
-  search,
-  priority,
-  dateFrom,
-  dateTo,
-  dateFilterType,
-} = req.query;
+    page,
+    limit,
+    status,
+    source,
+    assignedTo,
+    coAssignedTo,
+    search,
+    priority,
+    dateFrom,
+    dateTo,
+    dateFilterType,
+  } = req.query;
 
   const userId = req.user._id;
   const organization = req.user.organization;
@@ -92,12 +92,12 @@ export const getLeads = asyncHandler(async (req, res) => {
   if (priority) {
     queryConditions.push({ priority });
   }
-// Co-Assignee Filter
-if (coAssignedTo) {
-  queryConditions.push({
-    coAssignees: new mongoose.Types.ObjectId(coAssignedTo),
-  });
-}
+  // Co-Assignee Filter
+  if (coAssignedTo) {
+    queryConditions.push({
+      coAssignees: new mongoose.Types.ObjectId(coAssignedTo),
+    });
+  }
   // Date Range Filter
   if (dateFrom || dateTo) {
     const dateField =
@@ -345,32 +345,46 @@ const extractId = (value) => {
   return String(value);
 };
 
+const getUserGcalClient = async (userId) => {
+  const user = await User.findById(userId).select(
+    "+gcalTokens.access_token +gcalTokens.refresh_token +gcalTokens.expiry_date +gcalTokens.token_type +gcalTokens.scope",
+  );
+  if (!user?.gcalTokens?.access_token) {
+    return null;
+  }
+
+  const client = makeOAuth2Client();
+  client.setCredentials({
+    access_token: user.gcalTokens.access_token,
+    refresh_token: user.gcalTokens.refresh_token,
+    expiry_date: user.gcalTokens.expiry_date,
+    token_type: user.gcalTokens.token_type,
+    scope: user.gcalTokens.scope,
+  });
+
+  client.on("tokens", async (tokens) => {
+    const patch = {
+      "gcalTokens.access_token": tokens.access_token,
+      "gcalTokens.expiry_date": tokens.expiry_date,
+    };
+    if (tokens.refresh_token)
+      patch["gcalTokens.refresh_token"] = tokens.refresh_token;
+    await User.findByIdAndUpdate(userId, { $set: patch });
+  });
+
+  return client;
+};
+
 const createGcalEventForReminder = async (organization, reminderDoc, lead) => {
   try {
+    const ownerId = extractId(reminderDoc.assignedTo || reminderDoc.createdBy);
+    if (!ownerId) return null;
+
+    const client = await getUserGcalClient(ownerId);
+    if (!client) return null;
+
     const settings = await Settings.findOne({ organization });
-    if (!settings?.gcalConnected || !settings?.gcalTokens?.access_token)
-      return null;
-
-    const client = makeOAuth2Client();
-    client.setCredentials({
-      access_token: settings.gcalTokens.access_token,
-      refresh_token: settings.gcalTokens.refresh_token,
-      expiry_date: settings.gcalTokens.expiry_date,
-      token_type: settings.gcalTokens.token_type,
-      scope: settings.gcalTokens.scope,
-    });
-
-    client.on("tokens", async (tokens) => {
-      const patch = {
-        "gcalTokens.access_token": tokens.access_token,
-        "gcalTokens.expiry_date": tokens.expiry_date,
-      };
-      if (tokens.refresh_token)
-        patch["gcalTokens.refresh_token"] = tokens.refresh_token;
-      await Settings.findOneAndUpdate({ organization }, { $set: patch });
-    });
-
-    const timezone = settings.timezone || "Asia/Kolkata";
+    const timezone = settings?.timezone || "Asia/Kolkata";
     const dateStr = new Date(reminderDoc.reminderDate)
       .toISOString()
       .split("T")[0];
@@ -415,28 +429,14 @@ const createGcalEventForReminder = async (organization, reminderDoc, lead) => {
 const updateGcalEventForReminder = async (organization, reminderDoc, lead) => {
   if (!reminderDoc.gcalEventId) return null;
   try {
+    const ownerId = extractId(reminderDoc.assignedTo || reminderDoc.createdBy);
+    if (!ownerId) return null;
+
+    const client = await getUserGcalClient(ownerId);
+    if (!client) return null;
+
     const settings = await Settings.findOne({ organization });
-    if (!settings?.gcalConnected || !settings?.gcalTokens?.access_token)
-      return null;
-
-    const client = makeOAuth2Client();
-    client.setCredentials({
-      access_token: settings.gcalTokens.access_token,
-      refresh_token: settings.gcalTokens.refresh_token,
-      expiry_date: settings.gcalTokens.expiry_date,
-    });
-
-    client.on("tokens", async (tokens) => {
-      const patch = {
-        "gcalTokens.access_token": tokens.access_token,
-        "gcalTokens.expiry_date": tokens.expiry_date,
-      };
-      if (tokens.refresh_token)
-        patch["gcalTokens.refresh_token"] = tokens.refresh_token;
-      await Settings.findOneAndUpdate({ organization }, { $set: patch });
-    });
-
-    const timezone = settings.timezone || "Asia/Kolkata";
+    const timezone = settings?.timezone || "Asia/Kolkata";
     const dateStr = new Date(reminderDoc.reminderDate)
       .toISOString()
       .split("T")[0];
@@ -1378,18 +1378,11 @@ export const deleteLead = asyncHandler(async (req, res) => {
   for (const reminder of reminders) {
     if (reminder.gcalEventId) {
       try {
-        const settings = await Settings.findOne({ organization });
-        if (settings?.gcalConnected && settings?.gcalTokens?.access_token) {
-          const client = new google.auth.OAuth2(
-            process.env.GOOGLE_CLIENT_ID,
-            process.env.GOOGLE_CLIENT_SECRET,
-            process.env.GOOGLE_REDIRECT_URI,
-          );
-          client.setCredentials({
-            access_token: settings.gcalTokens.access_token,
-            refresh_token: settings.gcalTokens.refresh_token,
-            expiry_date: settings.gcalTokens.expiry_date,
-          });
+        const ownerId = extractId(
+          reminder.assignedTo || reminder.doneBy || req.user._id,
+        );
+        const client = ownerId ? await getUserGcalClient(ownerId) : null;
+        if (client) {
           const calendar = google.calendar({ version: "v3", auth: client });
           await calendar.events.delete({
             calendarId: "primary",
@@ -1767,16 +1760,16 @@ export const bulkAssignLeads = asyncHandler(async (req, res) => {
  */
 export const getLeadIds = asyncHandler(async (req, res) => {
   const {
-  status,
-  source,
-  assignedTo,
-  coAssignedTo,
-  search,
-  priority,
-  dateFrom,
-  dateTo,
-  dateFilterType,
-} = req.query;
+    status,
+    source,
+    assignedTo,
+    coAssignedTo,
+    search,
+    priority,
+    dateFrom,
+    dateTo,
+    dateFilterType,
+  } = req.query;
 
   const userId = req.user._id;
   const organization = req.user.organization;
@@ -1797,9 +1790,9 @@ export const getLeadIds = asyncHandler(async (req, res) => {
 
   if (source) filter.source = source;
   if (priority) filter.priority = priority;
-if (coAssignedTo) {
-  filter.coAssignees = new mongoose.Types.ObjectId(coAssignedTo);
-}
+  if (coAssignedTo) {
+    filter.coAssignees = new mongoose.Types.ObjectId(coAssignedTo);
+  }
   if (dateFrom || dateTo) {
     const dateField =
       dateFilterType === "closeDate" ? "closeDate" : "createdAt";
