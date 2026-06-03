@@ -27,32 +27,58 @@ const makeOAuth2Client = () =>
     process.env.GOOGLE_REDIRECT_URI,
   );
 
+const getUserId = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object") {
+    if (value._id) return String(value._id);
+    if (value.id) return String(value.id);
+    const stringValue = value.toString?.();
+    return stringValue && !stringValue.startsWith("[object") ? stringValue : "";
+  }
+  return String(value);
+};
+
+const getUserGcalClient = async (userId) => {
+  const user = await User.findById(userId).select(
+    "+gcalTokens.access_token +gcalTokens.refresh_token +gcalTokens.expiry_date +gcalTokens.token_type +gcalTokens.scope",
+  );
+  if (!user?.gcalTokens?.access_token) {
+    return null;
+  }
+
+  const client = makeOAuth2Client();
+  client.setCredentials({
+    access_token: user.gcalTokens.access_token,
+    refresh_token: user.gcalTokens.refresh_token,
+    expiry_date: user.gcalTokens.expiry_date,
+    token_type: user.gcalTokens.token_type,
+    scope: user.gcalTokens.scope,
+  });
+
+  client.on("tokens", async (tokens) => {
+    const patch = {
+      "gcalTokens.access_token": tokens.access_token,
+      "gcalTokens.expiry_date": tokens.expiry_date,
+    };
+    if (tokens.refresh_token)
+      patch["gcalTokens.refresh_token"] = tokens.refresh_token;
+    await User.findByIdAndUpdate(userId, { $set: patch });
+  });
+
+  return client;
+};
+
 const createGcalEvent = async (organization, reminder, lead) => {
   try {
+    const ownerId = getUserId(reminder.assignedTo || reminder.createdBy);
+    if (!ownerId) return null;
+
+    const client = await getUserGcalClient(ownerId);
+    if (!client) return null;
+
     const settings = await Settings.findOne({ organization });
-    if (!settings?.gcalConnected || !settings?.gcalTokens?.access_token)
-      return null;
-
-    const client = makeOAuth2Client();
-    client.setCredentials({
-      access_token: settings.gcalTokens.access_token,
-      refresh_token: settings.gcalTokens.refresh_token,
-      expiry_date: settings.gcalTokens.expiry_date,
-      token_type: settings.gcalTokens.token_type,
-      scope: settings.gcalTokens.scope,
-    });
-
-    client.on("tokens", async (tokens) => {
-      const patch = {
-        "gcalTokens.access_token": tokens.access_token,
-        "gcalTokens.expiry_date": tokens.expiry_date,
-      };
-      if (tokens.refresh_token)
-        patch["gcalTokens.refresh_token"] = tokens.refresh_token;
-      await Settings.findOneAndUpdate({ organization }, { $set: patch });
-    });
-
-    const timezone = settings.timezone || "Asia/Kolkata";
+    const timezone = settings?.timezone || "Asia/Kolkata";
     const dateStr = reminder.reminderDate.toISOString().split("T")[0];
     const timeStr = reminder.reminderTime || "09:00";
     const startDateTime = new Date(`${dateStr}T${timeStr}:00`);
@@ -108,13 +134,26 @@ const createGcalEvent = async (organization, reminder, lead) => {
  * @access Private
  */
 export const getReminders = asyncHandler(async (req, res) => {
-  const { page, limit, leadId, status } = req.query;
+  const { page, limit, leadId, status, assignedTo } = req.query;
   const organization = req.user.organization;
+  const isAdmin = req.user.role === "admin" || req.user.role === "master";
 
   let filter = { organization };
   if (leadId) filter.leadId = leadId;
   if (status === "pending") filter.isDone = false;
   if (status === "completed") filter.isDone = true;
+
+  if (assignedTo) {
+    if (isAdmin) {
+      filter.assignedTo = assignedTo;
+    } else if (String(assignedTo) === String(req.user._id)) {
+      filter.assignedTo = assignedTo;
+    } else {
+      filter.assignedTo = req.user._id;
+    }
+  } else if (!isAdmin) {
+    filter.assignedTo = req.user._id;
+  }
 
   const {
     skip,
@@ -402,10 +441,11 @@ export const deleteReminder = asyncHandler(async (req, res) => {
   // ── GCal event delete (same as before) ──
   if (reminder.gcalEventId) {
     try {
-      const settings = await Settings.findOne({ organization });
-      if (settings?.gcalConnected && settings?.gcalTokens?.access_token) {
-        const client = makeOAuth2Client();
-        client.setCredentials(settings.gcalTokens);
+      const ownerId = getUserId(
+        reminder.assignedTo || reminder.doneBy || req.user._id,
+      );
+      const client = ownerId ? await getUserGcalClient(ownerId) : null;
+      if (client) {
         const calendar = google.calendar({ version: "v3", auth: client });
         await calendar.events.delete({
           calendarId: "primary",
@@ -475,18 +515,34 @@ export const markReminderDone = asyncHandler(async (req, res) => {
  * @access Private
  */
 export const getTodayReminders = asyncHandler(async (req, res) => {
+  const { assignedTo } = req.query;
   const organization = req.user.organization;
+  const isAdmin = req.user.role === "admin" || req.user.role === "master";
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  const reminders = await Reminder.find({
+  const filter = {
     organization,
     isDone: false,
     reminderDate: { $gte: today, $lt: tomorrow },
-  })
+  };
+
+  if (assignedTo) {
+    if (isAdmin) {
+      filter.assignedTo = assignedTo;
+    } else if (String(assignedTo) === String(req.user._id)) {
+      filter.assignedTo = assignedTo;
+    } else {
+      filter.assignedTo = req.user._id;
+    }
+  } else if (!isAdmin) {
+    filter.assignedTo = req.user._id;
+  }
+
+  const reminders = await Reminder.find(filter)
     .populate("leadId", "name phone email")
     .populate("assignedTo", "name email")
     .sort({ reminderTime: 1 })
