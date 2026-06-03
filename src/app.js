@@ -27,10 +27,12 @@ import { fileURLToPath } from "url";
 import path from "path";
 import crossSellRouter from "./routes/Crosssell.routes.js";
 import startEmailScheduler from "./utils/emailScheduler.js";
+import { startReactivationCron } from "./cron/reactivationCron.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 startEmailScheduler();
+startReactivationCron();
 // Security middleware
 app.use(helmet());
 app.use(mongoSanitize());

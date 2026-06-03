@@ -171,6 +171,8 @@ export const getRecommendations = asyncHandler(async (req, res) => {
       recommendations: merged,
       crossSellRecordId: existing?._id || null,
       automationSent: existing?.automationSent || false,
+      reactivationServices: existing?.reactivationServices || [],  // ADD
+    reactivationDate: existing?.reactivationDate || null,
     }, "Recommendations fetched")
   );
 });
@@ -1006,3 +1008,59 @@ export const deleteRule = asyncHandler(async (req, res) => {
     .status(200)
     .json(new ApiResponse(200, {}, "Rule deleted"));
 });
+export const scheduleReactivation = asyncHandler(async (req, res) => {
+  const { leadId } = req.params;
+  const { services, reactivationDate } = req.body;
+  const { organization, _id: userId } = req.user;
+
+  if (!services?.length || !reactivationDate)
+    throw new ApiError(400, "services aur reactivationDate required hain");
+
+  const lead = await Lead.findOne({ _id: leadId, organization });
+  if (!lead) throw new ApiError(404, "Lead not found");
+
+const dateObj = new Date(reactivationDate);
+  if (isNaN(dateObj)) throw new ApiError(400, "Invalid date");
+  // UTC me save karo
+  dateObj.toISOString();
+
+  let record = await CrossSellLead.findOne({ leadId, organization });
+  if (!record) {
+    record = new CrossSellLead({
+      leadId, organization,
+      assignedTo: lead.assignedTo,
+      originalService: lead.product || "",
+      createdBy: userId,
+      recommendations: services.map(s => ({
+        service: s, status: "Pending",
+        respondedAt: new Date(), respondedBy: userId,
+      })),
+    });
+  }
+
+// Services ko recommendations me bhi add/merge karo
+  services.forEach((s) => {
+    const exists = record.recommendations.find((r) => r.service === s);
+    if (!exists) {
+      record.recommendations.push({
+        service: s,
+        status: "Pending",
+        respondedAt: new Date(),
+        respondedBy: userId,
+      });
+    }
+  });
+
+  record.reactivationDate = dateObj;
+  record.reactivationServices = services;
+  record.reactivationDone = false;
+  await record.save();
+
+  await Activity.create({
+    leadId, organization, type: "Note",
+    text: `📅 Reactivation scheduled: ${dateObj.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} — Services: ${services.join(", ")}`,
+    createdBy: userId,
+  });
+
+  res.status(200).json(new ApiResponse(200, { record }, "Reactivation scheduled"));
+}); 
