@@ -78,7 +78,10 @@ const crossSellLeadSchema = new mongoose.Schema(
     automationSent: { type: Boolean, default: false },
     automationSentAt: { type: Date, default: null },
 
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    reactivationDate: { type: Date, default: null },
+    reactivationServices: [{ type: String }],
+    reactivationDone: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

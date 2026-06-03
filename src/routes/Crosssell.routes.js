@@ -14,6 +14,7 @@ import {
   getSuccessLeads,     
   assignServices, 
   deleteRule,
+  scheduleReactivation,
 } from "../controllers/Crosssell.controller.js";
 import { verifyJWT } from "../middleware/auth.middleware.js";
 
@@ -31,7 +32,8 @@ router.get("/dashboard", getDashboard);
 router.get("/leads-overview", getLeadsOverview);
 router.get("/rules", getRules);
 router.post("/rules", createRule);
-router.put("/rules/:ruleId", updateRule);
+router.put("/rules/:ruleId", updateRule); 
 router.get("/success-leads", getSuccessLeads);        
 router.post("/assign-services/:leadId", assignServices);
+router.post("/schedule-reactivation/:leadId", scheduleReactivation);
 export default router;

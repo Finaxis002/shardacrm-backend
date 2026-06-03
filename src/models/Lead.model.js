@@ -141,6 +141,10 @@ const leadSchema = new mongoose.Schema(
       ref: "User",
       default: null,
     },
+    isCrossSell: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true },
 );
