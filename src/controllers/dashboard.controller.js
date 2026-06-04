@@ -15,6 +15,32 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
   const isAdmin = req.user.role === "admin";
   const isManager = req.user.role === "manager";
 
+    const { filter } = req.query;
+const now = new Date();
+let rangeStart = new Date();
+let rangeEnd = new Date();
+rangeEnd.setHours(23, 59, 59, 999);
+
+if (filter === "week") {
+  rangeEnd = new Date(); rangeEnd.setHours(23, 59, 59, 999);
+  rangeStart = new Date();
+  const day = now.getDay();
+  rangeStart.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+  rangeStart.setHours(0, 0, 0, 0);
+} else if (filter === "month") {
+  rangeEnd = new Date(); rangeEnd.setHours(23, 59, 59, 999);
+  rangeStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+} else if (filter === "today") {
+  rangeEnd = new Date(); rangeEnd.setHours(23, 59, 59, 999);
+  rangeStart = new Date(); rangeStart.setHours(0, 0, 0, 0);
+} else {
+  // "all" — koi date filter nahi
+  rangeStart = null;
+  rangeEnd = null;
+}
+
+
+
   let subordinateIds = [];
   if (isManager) {
     const subordinates = await User.find({ managerId: userId, organization })
@@ -31,42 +57,59 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
     "view_team_leads_only",
   );
 
+const dateFilter = rangeStart ? { createdAt: { $gte: rangeStart, $lte: rangeEnd } } : {};
   // Filter for VISIBILITY (Includes Co-Assignees) - Used for lists and counts
   const statsFilter = isAdmin
-    ? { organization }
+     ? { organization, ...dateFilter }     
     : isManager && canViewAll
-      ? { organization }
+      ? { organization, ...dateFilter } 
       : isManager && viewTeamOnly
         ? {
-            organization,
+            organization, ...dateFilter, 
             $or: [
               { assignedTo: { $in: allowedIds } },
               { coAssignees: { $in: allowedIds } },
             ],
           }
         : canViewAll
-          ? { organization }
+          ? { organization, ...dateFilter }
           : {
-              organization,
+              organization, ...dateFilter, 
               $or: [{ assignedTo: userId }, { coAssignees: userId }],
             };
 
   // Filter for ATTRIBUTION (Strictly Primary Owner) - Used for monetary stats
   const attributionFilter = isAdmin
-    ? { organization }
+    ? { organization, ...dateFilter }   
     : isManager && canViewAll
-      ? { organization }
+      ? { organization, ...dateFilter }     
       : isManager && viewTeamOnly
         ? {
-            organization,
+            organization, ...dateFilter,
             assignedTo: { $in: allowedIds },
           }
         : canViewAll
-          ? { organization }
+          ? { organization, ...dateFilter }   
           : {
-              organization,
+              organization, ...dateFilter, 
               assignedTo: userId,
             };
+const attributionFilterAllTime = isAdmin
+  ? { organization }
+  : isManager && canViewAll
+    ? { organization }
+    : isManager && viewTeamOnly
+      ? { organization, assignedTo: { $in: allowedIds } }
+      : canViewAll
+        ? { organization }
+        : { organization, assignedTo: userId };
+
+// All-time lead IDs (date filter nahi)
+const attributionLeadsAllTime = await Lead.find(attributionFilterAllTime)
+  .select("_id")
+  .lean();
+const attributionLeadIdsAllTime = attributionLeadsAllTime.map((l) => l._id);
+
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -107,15 +150,19 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
       { $group: { _id: null, total: { $sum: "$dealValue" } } },
     ]),
 
-    Payment.aggregate([
-      {
-        $match: {
-          organization,
-          leadId: { $in: attributionLeadIds },
-        },
-      },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
-    ]),
+Payment.aggregate([
+  {
+    $match: {
+      organization,
+      leadId: { $in: attributionLeadIdsAllTime },
+      // status: "Paid",
+      ...(rangeStart ? {
+        paymentDate: { $gte: rangeStart, $lte: rangeEnd } 
+      } : {}),
+    },
+  },
+  { $group: { _id: null, total: { $sum: "$amount" } } },
+]),
   ]);
 
   const [recentLeads, todayReminders, teamPerformance] = await Promise.all([
@@ -165,7 +212,19 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
       { $limit: 5 },
     ]),
   ]);
-
+// ═══════════════════════════════════════════════════════════════
+  // 🔍 DATA VERIFICATION MONITOR LOGS
+  // ═══════════════════════════════════════════════════════════════
+  console.log("------------------------------------");
+  console.log(`📈 METRICS FOR FILTER PROFILE: [${filter?.toUpperCase() || "TODAY"}]`);
+  console.log(`🔹 Total Leads Found     : ${totalLeads}`);
+  console.log(`🔹 Active Leads Found    : ${activeLeads}`);
+  console.log(`🔹 Won/Success Leads     : ${wonLeads}`);
+  console.log(`🔹 Closed Leads Found    : ${closedLeads}`);
+  console.log(`💰 Total Pipeline Value  : ₹${pipelineValueResult[0]?.total || 0}`);
+  console.log(`💳 Collected Payments    : ₹${collectedResult[0]?.total || 0}`);
+  console.log("------------------------------------");
+  
   res.status(200).json(
     new ApiResponse(
       200,
