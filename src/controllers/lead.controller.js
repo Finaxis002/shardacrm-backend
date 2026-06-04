@@ -12,6 +12,7 @@ import logger from "../utils/logger.js";
 import Settings from "../models/Settings.model.js";
 import { canUser } from "../utils/permissions.js";
 import { google } from "googleapis";
+import { CrossSellLead } from "../models/Crosssell.model.js";
 import {
   createNotifications,
   createNotificationsWithSender,
@@ -256,17 +257,31 @@ export const getLeads = asyncHandler(async (req, res) => {
   const totalValue = aggregationResult[0]?.totalValue[0]?.sum || 0;
 
   logger.info(`Fetched ${leads.length} leads for user ${userId}`);
+const leadIds = leads.map((l) => l._id);
+const crossSellRecords = await CrossSellLead.find({
+  leadId: { $in: leadIds },
+  organization,
+}).select("leadId recommendations").lean();
 
+const crossSellMap = {};
+crossSellRecords.forEach((r) => {
+  crossSellMap[r.leadId.toString()] = r.recommendations?.length > 0;
+});
+
+const enrichedLeads = leads.map((lead) => ({
+  ...lead,
+  hasCrossSell: crossSellMap[lead._id.toString()] || false,
+}));
   res.status(200).json(
-    new ApiResponse(
-      200,
-      {
-        ...formatPaginatedResponse(leads, total, pageNum, pageLimit),
-        totalValue,
-      },
-      "Leads fetched successfully",
-    ),
-  );
+  new ApiResponse(
+    200,
+    {
+      ...formatPaginatedResponse(enrichedLeads, total, pageNum, pageLimit),
+      totalValue,
+    },
+    "Leads fetched successfully",
+  ),
+);
 });
 
 /**
