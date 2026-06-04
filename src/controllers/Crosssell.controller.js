@@ -1014,7 +1014,7 @@ export const scheduleReactivation = asyncHandler(async (req, res) => {
   const { organization, _id: userId } = req.user;
 
   if (!services?.length || !reactivationDate)
-    throw new ApiError(400, "services aur reactivationDate required hain");
+    throw new ApiError(400, "services and reactivationDate are required");
 
   const lead = await Lead.findOne({ _id: leadId, organization });
   if (!lead) throw new ApiError(404, "Lead not found");

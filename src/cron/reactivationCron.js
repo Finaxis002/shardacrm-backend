@@ -23,7 +23,7 @@ export const startReactivationCron = () => {
           leadId: record.leadId,
           organization: record.organization,
           type: "Note",
-          text: `🔁 Lead "New" me reactivate hua — ${(record.reactivationServices || []).join(", ")}`,
+          text: `🔁 Lead reactivated in "New" status. — ${(record.reactivationServices || []).join(", ")}`,
           createdBy: record.assignedTo,
         });
         record.reactivationDone = true;
