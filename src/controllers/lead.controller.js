@@ -51,6 +51,7 @@ export const getLeads = asyncHandler(async (req, res) => {
     dateFrom,
     dateTo,
     dateFilterType,
+    sortBy,           // ✅ ADD
   } = req.query;
 
   const userId = req.user._id;
@@ -217,7 +218,36 @@ export const getLeads = asyncHandler(async (req, res) => {
           },
         ],
         data: [
-          { $sort: { updatedAt: -1 } },
+          ...(sortBy === "hottest"
+            ? [
+                {
+                  $addFields: {
+                    priorityWeight: {
+                      $switch: {
+                        branches: [
+                          { case: { $eq: ["$priority", "Urgent"] }, then: 3 },
+                          { case: { $eq: ["$priority", "High"] }, then: 2 },
+                          { case: { $eq: ["$priority", "Normal"] }, then: 1 },
+                        ],
+                        default: 0,
+                      },
+                    },
+                  },
+                },
+                { $sort: { priorityWeight: -1, createdAt: -1 } },
+              ]
+            : sortBy === "newest"
+            ? [{ $sort: { createdAt: -1 } }]
+            : sortBy === "active"
+            ? [{ $sort: { updatedAt: -1 } }]
+            : sortBy === "stale"
+            ? [{ $sort: { updatedAt: 1 } }]
+            : sortBy === "largest"
+            ? [{ $sort: { dealValue: -1, createdAt: -1 } }]
+            : sortBy === "upcoming"
+            ? [{ $sort: { "reminders.0.reminderDate": 1, createdAt: -1 } }]
+            : [{ $sort: { updatedAt: -1 } }]   // default
+          ),
           { $skip: skip },
           { $limit: pageLimit },
           {
@@ -268,9 +298,32 @@ crossSellRecords.forEach((r) => {
   crossSellMap[r.leadId.toString()] = r.recommendations?.length > 0;
 });
 
+const latestActivities = await Activity.aggregate([
+  { $match: { leadId: { $in: leadIds }, organization } },
+  { $sort: { createdAt: -1 } },
+  {
+    $group: {
+      _id: "$leadId",
+      text: { $first: "$text" },
+      type: { $first: "$type" },
+      createdAt: { $first: "$createdAt" },
+    },
+  },
+]);
+
+const activityMap = {};
+latestActivities.forEach((a) => {
+  activityMap[a._id.toString()] = {
+    text: a.text,
+    type: a.type,
+    createdAt: a.createdAt,
+  };
+});
+
 const enrichedLeads = leads.map((lead) => ({
   ...lead,
   hasCrossSell: crossSellMap[lead._id.toString()] || false,
+  lastActivity: activityMap[lead._id.toString()] || null,
 }));
   res.status(200).json(
   new ApiResponse(
