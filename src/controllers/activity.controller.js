@@ -1,10 +1,136 @@
+import { google } from "googleapis";
 import Activity from "../models/Activity.model.js";
 import Lead from "../models/Lead.model.js";
+import Settings from "../models/Settings.model.js";
+import User from "../models/User.model.js";
 import ApiError from "../utils/apiError.js";
 import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { formatPaginatedResponse, parsePagination } from "../utils/paginate.js";
 import logger from "../utils/logger.js";
+
+const makeOAuth2Client = () =>
+  new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI,
+  );
+
+const getUserId = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object") {
+    if (value._id) return String(value._id);
+    if (value.id) return String(value.id);
+    const stringValue = value.toString?.();
+    return stringValue && !stringValue.startsWith("[object") ? stringValue : "";
+  }
+  return String(value);
+};
+
+const getUserGcalClient = async (userId) => {
+  const user = await User.findById(userId).select(
+    "+gcalTokens.access_token +gcalTokens.refresh_token +gcalTokens.expiry_date +gcalTokens.token_type +gcalTokens.scope",
+  );
+  if (!user?.gcalTokens?.access_token) {
+    return null;
+  }
+
+  const client = makeOAuth2Client();
+  client.setCredentials({
+    access_token: user.gcalTokens.access_token,
+    refresh_token: user.gcalTokens.refresh_token,
+    expiry_date: user.gcalTokens.expiry_date,
+    token_type: user.gcalTokens.token_type,
+    scope: user.gcalTokens.scope,
+  });
+
+  client.on("tokens", async (tokens) => {
+    const patch = {
+      "gcalTokens.access_token": tokens.access_token,
+      "gcalTokens.expiry_date": tokens.expiry_date,
+    };
+    if (tokens.refresh_token)
+      patch["gcalTokens.refresh_token"] = tokens.refresh_token;
+    await User.findByIdAndUpdate(userId, { $set: patch });
+  });
+
+  return client;
+};
+
+const createTaskGcalEvent = async (activity, lead) => {
+  try {
+    const ownerId = getUserId(activity.taskAssignedTo || activity.createdBy);
+    if (!ownerId) return null;
+    const client = await getUserGcalClient(ownerId);
+    if (!client) return null;
+
+    const settings = await Settings.findOne({
+      organization: activity.organization,
+    });
+    const timezone = settings?.timezone || "Asia/Kolkata";
+    if (!activity.taskDueDate) return null;
+
+    const dateStr = activity.taskDueDate.toISOString().split("T")[0];
+    const timeStr = "10:00";
+    const startDateTime = new Date(`${dateStr}T${timeStr}:00`);
+    const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
+
+    const eventTitle = `Task: ${activity.text || lead?.name || "Lead task"}`;
+    const description = [
+      lead ? `Lead: ${lead.name}` : "",
+      lead?.phone ? `Phone: ${lead.phone}` : "",
+      activity.text ? `Task: ${activity.text}` : "",
+      activity.taskAssignedTo
+        ? `Assigned to: ${getUserId(activity.taskAssignedTo)}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const calendar = google.calendar({ version: "v3", auth: client });
+    const { data } = await calendar.events.insert({
+      calendarId: "primary",
+      resource: {
+        summary: eventTitle,
+        description,
+        start: { dateTime: startDateTime.toISOString(), timeZone: timezone },
+        end: { dateTime: endDateTime.toISOString(), timeZone: timezone },
+        reminders: {
+          useDefault: false,
+          overrides: [
+            { method: "popup", minutes: 30 },
+            { method: "email", minutes: 60 },
+          ],
+        },
+        extendedProperties: {
+          private: {
+            taskId: activity._id.toString(),
+            leadId: lead?._id?.toString() || "",
+          },
+        },
+      },
+    });
+
+    logger.info(`GCal event created for task ${activity._id}: ${data.id}`);
+    return data.id;
+  } catch (err) {
+    logger.warn(
+      `GCal task event creation failed (${activity._id}): ${err.message}`,
+    );
+    return null;
+  }
+};
+
+export const syncTaskToGoogleCalendars = async (activity, lead) => {
+  if (!activity?.taskDueDate) return null;
+  try {
+    return await createTaskGcalEvent(activity, lead);
+  } catch (err) {
+    logger.warn(`GCal task sync failed (${activity._id}): ${err.message}`);
+    return null;
+  }
+};
 
 // ── NEW: Smart activity notification ──
 import {
@@ -18,23 +144,49 @@ import {
  * @access Private
  */
 export const getActivities = asyncHandler(async (req, res) => {
-  const { page, limit, leadId, type } = req.query;
+  const { page, limit, leadId, type, assignedTo, status } = req.query;
   const organization = req.user.organization;
 
   const filter = { organization };
   if (leadId) filter.leadId = leadId;
   if (type) filter.type = type;
+  if (assignedTo) filter.taskAssignedTo = assignedTo;
+  if (type === "Task") {
+    if (status === "pending") filter.taskCompleted = false;
+    if (status === "completed") filter.taskCompleted = true;
+  }
+
+  if (limit === undefined || String(limit).trim() === "") {
+    const activities = await Activity.find(filter)
+      .populate("createdBy", "name email")
+      .populate("taskAssignedTo", "name email")
+      .populate("leadId", "name phone")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const total = activities.length;
+
+    logger.info(`Fetched ${activities.length} activities for user`);
+
+    res
+      .status(200)
+      .json(
+        new ApiResponse(200, activities, "Activities fetched successfully"),
+      );
+    return;
+  }
 
   const {
     skip,
     limit: pageLimit,
     page: pageNum,
-  } = parsePagination({ page, limit });
+  } = parsePagination({ page, limit }, 5000);
 
   const activities = await Activity.find(filter)
     .skip(skip)
     .limit(pageLimit)
     .populate("createdBy", "name email")
+    .populate("taskAssignedTo", "name email")
     .populate("leadId", "name phone")
     .sort({ createdAt: -1 })
     .lean();
@@ -65,6 +217,7 @@ export const getActivity = asyncHandler(async (req, res) => {
 
   const activity = await Activity.findOne({ _id: id, organization })
     .populate("createdBy", "name email")
+    .populate("taskAssignedTo", "name email")
     .populate("leadId", "name phone email")
     .lean();
 
@@ -126,6 +279,7 @@ export const createActivity = asyncHandler(async (req, res) => {
 
   await activity.save();
   await activity.populate("createdBy", "name email");
+  await activity.populate("taskAssignedTo", "name email");
 
   // ── Smart activity created notification ──
   // Sirf in types ke liye notification - Recording aur Payment alag handle hota hai
@@ -139,6 +293,10 @@ export const createActivity = asyncHandler(async (req, res) => {
       organization,
       isUpdate: false,
     });
+  }
+
+  if (activity.type === "Task") {
+    void syncTaskToGoogleCalendars(activity, lead);
   }
 
   logger.info(`Activity created: ${activity._id} for lead ${leadId}`);
@@ -202,6 +360,7 @@ export const updateActivity = asyncHandler(async (req, res) => {
   Object.assign(activity, req.body);
   await activity.save();
   await activity.populate("createdBy", "name email");
+  await activity.populate("taskAssignedTo", "name email");
 
   // ── Smart activity updated notification ──
   // Sirf tab jab actual change hua ho
@@ -225,6 +384,14 @@ export const updateActivity = asyncHandler(async (req, res) => {
     }
   } else if (!hasChanged) {
     logger.info(`Activity ${id} unchanged, skipping notification`);
+  }
+
+  if (activity.type === "Task") {
+    const lead = await Lead.findOne({
+      _id: activity.leadId,
+      organization,
+    }).lean();
+    void syncTaskToGoogleCalendars(activity, lead);
   }
 
   logger.info(`Activity updated: ${id}`);
@@ -278,20 +445,17 @@ export const getLeadActivities = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Lead not found");
   }
 
-const activities = await Activity.find({ leadId, organization })
-  .populate("createdBy", "name email")
-  .sort({ updatedAt: -1, createdAt: -1 })
-  .lean();
+  const activities = await Activity.find({ leadId, organization })
+    .populate("createdBy", "name email")
+    .populate("taskAssignedTo", "name email")
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .lean();
 
-const total = activities.length;
+  const total = activities.length;
 
   res
     .status(200)
     .json(
-      new ApiResponse(
-        200,
-        activities,
-        "Lead activities fetched successfully",
-      ),
+      new ApiResponse(200, activities, "Lead activities fetched successfully"),
     );
 });

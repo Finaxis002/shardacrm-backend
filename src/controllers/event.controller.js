@@ -136,7 +136,12 @@ const syncEventToGoogleCalendars = async (eventDoc) => {
 
 // ── GET /api/v1/events ────────────────────────────────────────────────────────
 export const getEvents = asyncHandler(async (req, res) => {
-  const { limit = 100, page = 1, assignedTo } = req.query;
+  const { limit, page = 1 } = req.query;
+  let assignedTo = req.query.assignedTo;
+  if (assignedTo === "all") assignedTo = undefined;
+  const pageNum = parseInt(page, 10) || 1;
+  const limitValue =
+    String(limit || "").trim() === "0" ? 0 : Number(limit || 0);
 
   const filter = { organization: req.user.organization };
   const isAdmin = req.user.role === "admin" || req.user.role === "master";
@@ -153,14 +158,18 @@ export const getEvents = asyncHandler(async (req, res) => {
     filter.assignedTo = req.user._id;
   }
 
+  const query = Event.find(filter)
+    .sort({ eventDate: 1, eventTime: 1 })
+    .populate("assignedTo", "name email")
+    .populate("createdBy", "name email")
+    .populate("doneBy", "name email");
+
+  if (limitValue > 0) {
+    query.skip((pageNum - 1) * limitValue).limit(limitValue);
+  }
+
   const [data, total] = await Promise.all([
-    Event.find(filter)
-      .sort({ eventDate: 1, eventTime: 1 })
-      .skip((Number(page) - 1) * Number(limit))
-      .limit(Number(limit))
-      .populate("assignedTo", "name email")
-      .populate("createdBy", "name email")
-      .populate("doneBy", "name email"),
+    query,
     Event.countDocuments(filter),
   ]);
 

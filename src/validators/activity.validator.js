@@ -26,5 +26,5 @@ export const getActivitiesValidator = Joi.object({
   leadId: Joi.string().optional(),
   type: Joi.string().optional(),
   page: Joi.number().optional().min(1).default(1),
-  limit: Joi.number().optional().min(1).max(100).default(10),
+  limit: Joi.number().optional().min(1).max(5000).default(10),
 });
