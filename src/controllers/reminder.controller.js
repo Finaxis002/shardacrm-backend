@@ -134,13 +134,17 @@ const createGcalEvent = async (organization, reminder, lead) => {
  * @access Private
  */
 export const getReminders = asyncHandler(async (req, res) => {
-  const { page, limit, leadId, status, assignedTo } = req.query;
+  const { page, limit, leadId, status } = req.query;
+  let assignedTo = req.query.assignedTo;
+  if (assignedTo === "all") assignedTo = undefined;
   const organization = req.user.organization;
   const isAdmin = req.user.role === "admin" || req.user.role === "master";
 
   let filter = { organization };
   if (leadId) filter.leadId = leadId;
-  if (status === "pending") filter.isDone = false;
+  if (status === "pending") {
+    filter.$or = [{ isDone: false }, { isDone: { $exists: false } }];
+  }
   if (status === "completed") filter.isDone = true;
 
   if (assignedTo) {
@@ -153,6 +157,20 @@ export const getReminders = asyncHandler(async (req, res) => {
     }
   } else if (!isAdmin) {
     filter.assignedTo = req.user._id;
+  }
+
+  if (limit === undefined || String(limit).trim() === "") {
+    const reminders = await Reminder.find(filter)
+      .populate("leadId", "name phone email")
+      .populate("assignedTo", "name email")
+      .populate("doneBy", "name email")
+      .sort({ reminderDate: 1 })
+      .lean();
+
+    res
+      .status(200)
+      .json(new ApiResponse(200, reminders, "Reminders fetched successfully"));
+    return;
   }
 
   const {
@@ -515,7 +533,8 @@ export const markReminderDone = asyncHandler(async (req, res) => {
  * @access Private
  */
 export const getTodayReminders = asyncHandler(async (req, res) => {
-  const { assignedTo } = req.query;
+  let assignedTo = req.query.assignedTo;
+  if (assignedTo === "all") assignedTo = undefined;
   const organization = req.user.organization;
   const isAdmin = req.user.role === "admin" || req.user.role === "master";
 
@@ -526,7 +545,7 @@ export const getTodayReminders = asyncHandler(async (req, res) => {
 
   const filter = {
     organization,
-    isDone: false,
+    $or: [{ isDone: false }, { isDone: { $exists: false } }],
     reminderDate: { $gte: today, $lt: tomorrow },
   };
 

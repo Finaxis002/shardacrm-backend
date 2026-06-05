@@ -32,6 +32,7 @@ import {
   sendReminderNotification,
   detectActivityChange,
 } from "../utils/leadNotification.utils.js";
+import { syncTaskToGoogleCalendars } from "../controllers/activity.controller.js";
 
 /**
  * Get all leads with filters and pagination
@@ -51,7 +52,7 @@ export const getLeads = asyncHandler(async (req, res) => {
     dateFrom,
     dateTo,
     dateFilterType,
-    sortBy,           // ✅ ADD
+    sortBy, // ✅ ADD
   } = req.query;
 
   const userId = req.user._id;
@@ -237,17 +238,23 @@ export const getLeads = asyncHandler(async (req, res) => {
                 { $sort: { priorityWeight: -1, createdAt: -1 } },
               ]
             : sortBy === "newest"
-            ? [{ $sort: { createdAt: -1 } }]
-            : sortBy === "active"
-            ? [{ $sort: { updatedAt: -1 } }]
-            : sortBy === "stale"
-            ? [{ $sort: { updatedAt: 1 } }]
-            : sortBy === "largest"
-            ? [{ $sort: { dealValue: -1, createdAt: -1 } }]
-            : sortBy === "upcoming"
-            ? [{ $sort: { "reminders.0.reminderDate": 1, createdAt: -1 } }]
-            : [{ $sort: { updatedAt: -1 } }]   // default
-          ),
+              ? [{ $sort: { createdAt: -1 } }]
+              : sortBy === "active"
+                ? [{ $sort: { updatedAt: -1 } }]
+                : sortBy === "stale"
+                  ? [{ $sort: { updatedAt: 1 } }]
+                  : sortBy === "largest"
+                    ? [{ $sort: { dealValue: -1, createdAt: -1 } }]
+                    : sortBy === "upcoming"
+                      ? [
+                          {
+                            $sort: {
+                              "reminders.0.reminderDate": 1,
+                              createdAt: -1,
+                            },
+                          },
+                        ]
+                      : [{ $sort: { updatedAt: -1 } }]), // default
           { $skip: skip },
           { $limit: pageLimit },
           {
@@ -287,54 +294,56 @@ export const getLeads = asyncHandler(async (req, res) => {
   const totalValue = aggregationResult[0]?.totalValue[0]?.sum || 0;
 
   logger.info(`Fetched ${leads.length} leads for user ${userId}`);
-const leadIds = leads.map((l) => l._id);
-const crossSellRecords = await CrossSellLead.find({
-  leadId: { $in: leadIds },
-  organization,
-}).select("leadId recommendations").lean();
+  const leadIds = leads.map((l) => l._id);
+  const crossSellRecords = await CrossSellLead.find({
+    leadId: { $in: leadIds },
+    organization,
+  })
+    .select("leadId recommendations")
+    .lean();
 
-const crossSellMap = {};
-crossSellRecords.forEach((r) => {
-  crossSellMap[r.leadId.toString()] = r.recommendations?.length > 0;
-});
+  const crossSellMap = {};
+  crossSellRecords.forEach((r) => {
+    crossSellMap[r.leadId.toString()] = r.recommendations?.length > 0;
+  });
 
-const latestActivities = await Activity.aggregate([
-  { $match: { leadId: { $in: leadIds }, organization } },
-  { $sort: { createdAt: -1 } },
-  {
-    $group: {
-      _id: "$leadId",
-      text: { $first: "$text" },
-      type: { $first: "$type" },
-      createdAt: { $first: "$createdAt" },
-    },
-  },
-]);
-
-const activityMap = {};
-latestActivities.forEach((a) => {
-  activityMap[a._id.toString()] = {
-    text: a.text,
-    type: a.type,
-    createdAt: a.createdAt,
-  };
-});
-
-const enrichedLeads = leads.map((lead) => ({
-  ...lead,
-  hasCrossSell: crossSellMap[lead._id.toString()] || false,
-  lastActivity: activityMap[lead._id.toString()] || null,
-}));
-  res.status(200).json(
-  new ApiResponse(
-    200,
+  const latestActivities = await Activity.aggregate([
+    { $match: { leadId: { $in: leadIds }, organization } },
+    { $sort: { createdAt: -1 } },
     {
-      ...formatPaginatedResponse(enrichedLeads, total, pageNum, pageLimit),
-      totalValue,
+      $group: {
+        _id: "$leadId",
+        text: { $first: "$text" },
+        type: { $first: "$type" },
+        createdAt: { $first: "$createdAt" },
+      },
     },
-    "Leads fetched successfully",
-  ),
-);
+  ]);
+
+  const activityMap = {};
+  latestActivities.forEach((a) => {
+    activityMap[a._id.toString()] = {
+      text: a.text,
+      type: a.type,
+      createdAt: a.createdAt,
+    };
+  });
+
+  const enrichedLeads = leads.map((lead) => ({
+    ...lead,
+    hasCrossSell: crossSellMap[lead._id.toString()] || false,
+    lastActivity: activityMap[lead._id.toString()] || null,
+  }));
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        ...formatPaginatedResponse(enrichedLeads, total, pageNum, pageLimit),
+        totalValue,
+      },
+      "Leads fetched successfully",
+    ),
+  );
 });
 
 /**
@@ -1239,6 +1248,9 @@ export const updateLead = asyncHandler(async (req, res) => {
         organization,
         isUpdate,
       });
+      if (act.type === "Task") {
+        void syncTaskToGoogleCalendars(savedActivity, lead);
+      }
     }
   }
 

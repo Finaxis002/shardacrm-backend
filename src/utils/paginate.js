@@ -5,9 +5,9 @@
  * @param {number} options.limit - Items per page (default: 10)
  * @returns {Object} Pagination object with skip, limit, page
  */
-export const parsePagination = ({ page, limit }) => {
+export const parsePagination = ({ page, limit }, maxLimit = 100) => {
   const pageNum = parseInt(page, 10) || 1;
-    const pageLimit = Math.min(100, Math.max(1, parseInt(limit) || 20));
+  const pageLimit = Math.min(maxLimit, Math.max(1, parseInt(limit) || 20));
   const skip = (pageNum - 1) * pageLimit;
 
   return { skip, limit: pageLimit, page: pageNum };
