@@ -43,8 +43,21 @@ const getUserGcalClient = async (userId) => {
   return client;
 };
 
-const createGcalEventForUser = async ({
-  userId,
+const getId = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (value._id) return String(value._id);
+  if (value.id) return String(value.id);
+  const stringValue = value.toString?.();
+  return stringValue && !stringValue.startsWith("[object") ? stringValue : "";
+};
+
+const getAssignedToIds = (eventDoc) =>
+  Array.isArray(eventDoc.assignedTo)
+    ? eventDoc.assignedTo.map(getId).filter(Boolean)
+    : [];
+
+const buildEventGcalResource = ({
   title,
   note,
   eventDate,
@@ -54,46 +67,50 @@ const createGcalEventForUser = async ({
   createdById,
   eventId,
 }) => {
+  const start = new Date(`${eventDate}T${eventTime || "10:00"}:00`);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+
+  const description = [
+    note ? `Note: ${note}` : "",
+    `Assigned To: ${assignedToIds.join(", ")}`,
+    `Created By: ${createdById}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return {
+    summary: title,
+    description,
+    start: { dateTime: start.toISOString(), timeZone: timezone },
+    end: { dateTime: end.toISOString(), timeZone: timezone },
+    reminders: {
+      useDefault: false,
+      overrides: [
+        { method: "popup", minutes: 30 },
+        { method: "email", minutes: 60 },
+      ],
+    },
+    extendedProperties: {
+      private: {
+        eventId,
+        eventDate,
+        eventTime,
+        assignedTo: assignedToIds.join(","),
+        createdBy: createdById,
+      },
+    },
+  };
+};
+
+const createGcalEventForUser = async (payload) => {
   try {
-    const client = await getUserGcalClient(userId);
+    const client = await getUserGcalClient(payload.userId);
     if (!client) return null;
-
-    const start = new Date(`${eventDate}T${eventTime || "10:00"}:00`);
-    const end = new Date(start.getTime() + 60 * 60 * 1000);
-
-    const description = [
-      note ? `Note: ${note}` : "",
-      `Assigned To: ${assignedToIds.join(", ")}`,
-      `Created By: ${createdById}`,
-    ]
-      .filter(Boolean)
-      .join("\n");
 
     const calendar = google.calendar({ version: "v3", auth: client });
     const { data } = await calendar.events.insert({
       calendarId: "primary",
-      resource: {
-        summary: title,
-        description,
-        start: { dateTime: start.toISOString(), timeZone: timezone },
-        end: { dateTime: end.toISOString(), timeZone: timezone },
-        reminders: {
-          useDefault: false,
-          overrides: [
-            { method: "popup", minutes: 30 },
-            { method: "email", minutes: 60 },
-          ],
-        },
-        extendedProperties: {
-          private: {
-            eventId,
-            eventDate,
-            eventTime,
-            assignedTo: assignedToIds.join(","),
-            createdBy: createdById,
-          },
-        },
-      },
+      resource: buildEventGcalResource(payload),
     });
 
     return data.id;
@@ -102,36 +119,148 @@ const createGcalEventForUser = async ({
   }
 };
 
-const syncEventToGoogleCalendars = async (eventDoc) => {
-  const assignedToIds = eventDoc.assignedTo.map((item) =>
-    item?._id ? String(item._id) : String(item),
+const updateGcalEventForUser = async (payload) => {
+  try {
+    const client = await getUserGcalClient(payload.userId);
+    if (!client) return null;
+
+    const calendar = google.calendar({ version: "v3", auth: client });
+    const { data } = await calendar.events.update({
+      calendarId: payload.calendarId || "primary",
+      eventId: payload.gcalEventId,
+      resource: buildEventGcalResource(payload),
+    });
+
+    return data.id;
+  } catch (err) {
+    return null;
+  }
+};
+
+const deleteGcalEventForUser = async (
+  userId,
+  eventId,
+  calendarId = "primary",
+) => {
+  if (!userId || !eventId) return false;
+  try {
+    const client = await getUserGcalClient(userId);
+    if (!client) return false;
+
+    const calendar = google.calendar({ version: "v3", auth: client });
+    await calendar.events.delete({
+      calendarId,
+      eventId,
+    });
+    return true;
+  } catch (err) {
+    if (err?.code === 404 || err?.response?.status === 404) return true;
+    return false;
+  }
+};
+
+const deleteEventFromGoogleCalendars = async (eventDoc) => {
+  const records = Array.isArray(eventDoc?.googleCalendarEvents)
+    ? eventDoc.googleCalendarEvents
+    : [];
+
+  await Promise.allSettled(
+    records.map((record) =>
+      deleteGcalEventForUser(
+        getId(record.user),
+        record.eventId,
+        record.calendarId || "primary",
+      ),
+    ),
   );
+};
+
+const syncEventToGoogleCalendars = async (eventDoc) => {
+  const assignedToIds = getAssignedToIds(eventDoc);
   if (!assignedToIds.length) return;
+
+  const existingRecords = Array.isArray(eventDoc.googleCalendarEvents)
+    ? eventDoc.googleCalendarEvents
+    : [];
+
+  if (eventDoc.isDone) {
+    await deleteEventFromGoogleCalendars(eventDoc);
+    await Event.findByIdAndUpdate(eventDoc._id, {
+      $set: { googleCalendarEvents: [] },
+    });
+    eventDoc.googleCalendarEvents = [];
+    return;
+  }
 
   const settings = await Settings.findOne({
     organization: eventDoc.organization,
   });
   const timezone = settings?.timezone || "Asia/Kolkata";
-  const createdById = eventDoc.createdBy?._id
-    ? String(eventDoc.createdBy._id)
-    : String(eventDoc.createdBy);
+  const createdById = getId(eventDoc.createdBy);
   const eventId = String(eventDoc._id);
+  const nextRecords = [];
 
   await Promise.allSettled(
-    assignedToIds.map((userId) =>
-      createGcalEventForUser({
-        userId,
-        title: eventDoc.title,
-        note: eventDoc.note,
-        eventDate: eventDoc.eventDate,
-        eventTime: eventDoc.eventTime,
-        timezone,
-        assignedToIds,
-        createdById,
-        eventId,
-      }),
-    ),
+    existingRecords
+      .filter((record) => !assignedToIds.includes(getId(record.user)))
+      .map((record) =>
+        deleteGcalEventForUser(
+          getId(record.user),
+          record.eventId,
+          record.calendarId || "primary",
+        ),
+      ),
   );
+
+  for (const userId of assignedToIds) {
+    const existing = existingRecords.find(
+      (record) =>
+        getId(record.user) === userId &&
+        record.eventId &&
+        record.syncStatus !== "deleted",
+    );
+
+    const payload = {
+      userId,
+      title: eventDoc.title,
+      note: eventDoc.note,
+      eventDate: eventDoc.eventDate,
+      eventTime: eventDoc.eventTime,
+      timezone,
+      assignedToIds,
+      createdById,
+      eventId,
+      gcalEventId: existing?.eventId,
+      calendarId: existing?.calendarId || "primary",
+    };
+
+    const gcalEventId = existing?.eventId
+      ? await updateGcalEventForUser(payload)
+      : await createGcalEventForUser(payload);
+
+    if (gcalEventId) {
+      nextRecords.push({
+        user: userId,
+        eventId: gcalEventId,
+        calendarId: existing?.calendarId || "primary",
+        syncStatus: "synced",
+        lastSyncedAt: new Date(),
+      });
+    } else if (existing?.eventId) {
+      nextRecords.push({
+        user: userId,
+        eventId: existing.eventId,
+        calendarId: existing.calendarId || "primary",
+        syncStatus: existing.syncStatus || "synced",
+        lastSyncedAt: existing.lastSyncedAt || new Date(),
+      });
+    }
+  }
+
+  await Event.findByIdAndUpdate(eventDoc._id, {
+    $set: { googleCalendarEvents: nextRecords },
+  });
+  eventDoc.googleCalendarEvents = nextRecords;
 };
 
 // ── GET /api/v1/events ────────────────────────────────────────────────────────
@@ -285,6 +414,8 @@ export const updateEvent = asyncHandler(async (req, res) => {
 
   if (!event) throw new ApiError(404, "Event not found");
 
+  await syncEventToGoogleCalendars(event);
+
   res.status(200).json(new ApiResponse(200, event, "Event updated"));
 });
 
@@ -307,6 +438,8 @@ export const markEventDone = asyncHandler(async (req, res) => {
 
   if (!event) throw new ApiError(404, "Event not found");
 
+  await syncEventToGoogleCalendars(event);
+
   res
     .status(200)
     .json(
@@ -320,12 +453,15 @@ export const markEventDone = asyncHandler(async (req, res) => {
 
 // ── DELETE /api/v1/events/:id ─────────────────────────────────────────────────
 export const deleteEvent = asyncHandler(async (req, res) => {
-  const event = await Event.findOneAndDelete({
+  const event = await Event.findOne({
     _id: req.params.id,
     organization: req.user.organization,
   });
 
   if (!event) throw new ApiError(404, "Event not found");
+
+  await deleteEventFromGoogleCalendars(event);
+  await Event.findByIdAndDelete(event._id);
 
   res.status(200).json(new ApiResponse(200, {}, "Event deleted"));
 });

@@ -77,6 +77,19 @@ const activitySchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    gcalEventId: {
+      type: String,
+      default: "",
+    },
+    gcalCalendarId: {
+      type: String,
+      default: "primary",
+    },
+    gcalSyncedUser: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
 
     // For Status Changes
     statusFrom: String,
@@ -100,6 +113,7 @@ const activitySchema = new mongoose.Schema(
 // Index for faster queries
 activitySchema.index({ leadId: 1, createdAt: -1 });
 activitySchema.index({ organization: 1, createdAt: -1 });
+activitySchema.index({ gcalEventId: 1 });
 
 const Activity = mongoose.model("Activity", activitySchema);
 export default Activity;

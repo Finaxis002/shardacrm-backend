@@ -58,58 +58,68 @@ const getUserGcalClient = async (userId) => {
   return client;
 };
 
-const createTaskGcalEvent = async (activity, lead) => {
+const buildTaskGcalResource = async (activity, lead) => {
+  const settings = await Settings.findOne({
+    organization: activity.organization,
+  });
+  const timezone = settings?.timezone || "Asia/Kolkata";
+  if (!activity.taskDueDate) return null;
+
+  const dueDate = new Date(activity.taskDueDate);
+  const dateStr = dueDate.toISOString().split("T")[0];
+  const timeStr = "10:00";
+  const startDateTime = new Date(`${dateStr}T${timeStr}:00`);
+  const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
+
+  const eventTitle = `Task: ${activity.text || lead?.name || "Lead task"}`;
+  const description = [
+    lead ? `Lead: ${lead.name}` : "",
+    lead?.phone ? `Phone: ${lead.phone}` : "",
+    activity.text ? `Task: ${activity.text}` : "",
+    activity.taskAssignedTo
+      ? `Assigned to: ${getUserId(activity.taskAssignedTo)}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return {
+    summary: eventTitle,
+    description,
+    start: { dateTime: startDateTime.toISOString(), timeZone: timezone },
+    end: { dateTime: endDateTime.toISOString(), timeZone: timezone },
+    reminders: {
+      useDefault: false,
+      overrides: [
+        { method: "popup", minutes: 30 },
+        { method: "email", minutes: 60 },
+      ],
+    },
+    extendedProperties: {
+      private: {
+        taskId: activity._id.toString(),
+        leadId: lead?._id?.toString() || "",
+      },
+    },
+  };
+};
+
+const createTaskGcalEvent = async (activity, lead, ownerIdOverride = null) => {
   try {
-    const ownerId = getUserId(activity.taskAssignedTo || activity.createdBy);
+    const ownerId =
+      ownerIdOverride ||
+      getUserId(activity.taskAssignedTo || activity.createdBy);
     if (!ownerId) return null;
     const client = await getUserGcalClient(ownerId);
     if (!client) return null;
 
-    const settings = await Settings.findOne({
-      organization: activity.organization,
-    });
-    const timezone = settings?.timezone || "Asia/Kolkata";
-    if (!activity.taskDueDate) return null;
-
-    const dateStr = activity.taskDueDate.toISOString().split("T")[0];
-    const timeStr = "10:00";
-    const startDateTime = new Date(`${dateStr}T${timeStr}:00`);
-    const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
-
-    const eventTitle = `Task: ${activity.text || lead?.name || "Lead task"}`;
-    const description = [
-      lead ? `Lead: ${lead.name}` : "",
-      lead?.phone ? `Phone: ${lead.phone}` : "",
-      activity.text ? `Task: ${activity.text}` : "",
-      activity.taskAssignedTo
-        ? `Assigned to: ${getUserId(activity.taskAssignedTo)}`
-        : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const resource = await buildTaskGcalResource(activity, lead);
+    if (!resource) return null;
 
     const calendar = google.calendar({ version: "v3", auth: client });
     const { data } = await calendar.events.insert({
       calendarId: "primary",
-      resource: {
-        summary: eventTitle,
-        description,
-        start: { dateTime: startDateTime.toISOString(), timeZone: timezone },
-        end: { dateTime: endDateTime.toISOString(), timeZone: timezone },
-        reminders: {
-          useDefault: false,
-          overrides: [
-            { method: "popup", minutes: 30 },
-            { method: "email", minutes: 60 },
-          ],
-        },
-        extendedProperties: {
-          private: {
-            taskId: activity._id.toString(),
-            leadId: lead?._id?.toString() || "",
-          },
-        },
-      },
+      resource,
     });
 
     logger.info(`GCal event created for task ${activity._id}: ${data.id}`);
@@ -122,10 +132,156 @@ const createTaskGcalEvent = async (activity, lead) => {
   }
 };
 
-export const syncTaskToGoogleCalendars = async (activity, lead) => {
-  if (!activity?.taskDueDate) return null;
+const updateTaskGcalEvent = async (
+  activity,
+  lead,
+  ownerIdOverride = null,
+  eventIdOverride = null,
+) => {
+  const eventId = eventIdOverride || activity.gcalEventId;
+  if (!eventId) return null;
+
   try {
-    return await createTaskGcalEvent(activity, lead);
+    const ownerId =
+      ownerIdOverride ||
+      getUserId(activity.taskAssignedTo || activity.createdBy);
+    if (!ownerId) return null;
+    const client = await getUserGcalClient(ownerId);
+    if (!client) return null;
+
+    const resource = await buildTaskGcalResource(activity, lead);
+    if (!resource) return null;
+
+    const calendar = google.calendar({ version: "v3", auth: client });
+    const { data } = await calendar.events.update({
+      calendarId: activity.gcalCalendarId || "primary",
+      eventId,
+      resource,
+    });
+
+    logger.info(`GCal event updated for task ${activity._id}: ${data.id}`);
+    return data.id;
+  } catch (err) {
+    if (err?.code === 404 || err?.response?.status === 404) return "not_found";
+    logger.warn(
+      `GCal task event update failed (${activity._id}): ${err.message}`,
+    );
+    return null;
+  }
+};
+
+export const deleteTaskGcalEvent = async (
+  activity,
+  ownerIdOverride = null,
+  eventIdOverride = null,
+) => {
+  const eventId = eventIdOverride || activity?.gcalEventId;
+  if (!activity || !eventId) return false;
+
+  try {
+    const ownerId =
+      ownerIdOverride ||
+      getUserId(activity.taskAssignedTo || activity.createdBy);
+    if (!ownerId) return false;
+    const client = await getUserGcalClient(ownerId);
+    if (!client) return false;
+
+    const calendar = google.calendar({ version: "v3", auth: client });
+    await calendar.events.delete({
+      calendarId: activity.gcalCalendarId || "primary",
+      eventId,
+    });
+
+    logger.info(`GCal event deleted for task ${activity._id}: ${eventId}`);
+    return true;
+  } catch (err) {
+    if (err?.code === 404 || err?.response?.status === 404) return true;
+    logger.warn(
+      `GCal task event delete failed (${activity._id}): ${err.message}`,
+    );
+    return false;
+  }
+};
+
+export const syncTaskToGoogleCalendars = async (
+  activity,
+  lead,
+  previousAssignedTo = null,
+) => {
+  if (!activity || activity.type !== "Task") return null;
+
+  try {
+    const currentOwnerId = getUserId(
+      activity.taskAssignedTo || activity.createdBy,
+    );
+    const previousOwnerId = getUserId(previousAssignedTo);
+    let existingEventId = activity.gcalEventId || "";
+
+    if (activity.taskCompleted || !activity.taskDueDate) {
+      if (existingEventId) {
+        await deleteTaskGcalEvent(
+          activity,
+          previousOwnerId || currentOwnerId,
+          existingEventId,
+        );
+        await Activity.findByIdAndUpdate(activity._id, {
+          $set: {
+            gcalEventId: "",
+            gcalSyncedUser: null,
+          },
+        });
+        activity.gcalEventId = "";
+        activity.gcalSyncedUser = null;
+      }
+      return null;
+    }
+
+    if (
+      existingEventId &&
+      previousOwnerId &&
+      currentOwnerId &&
+      previousOwnerId !== currentOwnerId
+    ) {
+      await deleteTaskGcalEvent(activity, previousOwnerId, existingEventId);
+      existingEventId = "";
+      activity.gcalEventId = "";
+    }
+
+    if (existingEventId) {
+      const updatedId = await updateTaskGcalEvent(
+        activity,
+        lead,
+        currentOwnerId,
+        existingEventId,
+      );
+      if (updatedId && updatedId !== "not_found") {
+        await Activity.findByIdAndUpdate(activity._id, {
+          $set: {
+            gcalEventId: updatedId,
+            gcalCalendarId: activity.gcalCalendarId || "primary",
+            gcalSyncedUser: currentOwnerId || null,
+          },
+        });
+        activity.gcalEventId = updatedId;
+        return updatedId;
+      }
+      if (updatedId !== "not_found") return null;
+    }
+
+    const createdId = await createTaskGcalEvent(activity, lead, currentOwnerId);
+    if (createdId) {
+      await Activity.findByIdAndUpdate(activity._id, {
+        $set: {
+          gcalEventId: createdId,
+          gcalCalendarId: "primary",
+          gcalSyncedUser: currentOwnerId || null,
+        },
+      });
+      activity.gcalEventId = createdId;
+      activity.gcalCalendarId = "primary";
+      activity.gcalSyncedUser = currentOwnerId || null;
+    }
+    return createdId;
   } catch (err) {
     logger.warn(`GCal task sync failed (${activity._id}): ${err.message}`);
     return null;
@@ -296,7 +452,7 @@ export const createActivity = asyncHandler(async (req, res) => {
   }
 
   if (activity.type === "Task") {
-    void syncTaskToGoogleCalendars(activity, lead);
+    await syncTaskToGoogleCalendars(activity, lead);
   }
 
   logger.info(`Activity created: ${activity._id} for lead ${leadId}`);
@@ -334,7 +490,9 @@ export const updateActivity = asyncHandler(async (req, res) => {
     callDirection: activity.callDirection,
     callOutcome: activity.callOutcome,
     taskDueDate: activity.taskDueDate,
-    taskAssignedTo: activity.taskAssignedTo,
+    taskAssignedTo: activity.taskAssignedTo
+      ? activity.taskAssignedTo.toString()
+      : null,
   };
 
   const activityType = activity.type;
@@ -391,7 +549,7 @@ export const updateActivity = asyncHandler(async (req, res) => {
       _id: activity.leadId,
       organization,
     }).lean();
-    void syncTaskToGoogleCalendars(activity, lead);
+    await syncTaskToGoogleCalendars(activity, lead, oldActivity.taskAssignedTo);
   }
 
   logger.info(`Activity updated: ${id}`);
@@ -419,6 +577,10 @@ export const deleteActivity = asyncHandler(async (req, res) => {
   // Only creator or admin can delete
   if (!activity.createdBy.equals(userId) && req.user.role !== "admin") {
     throw new ApiError(403, "Not authorized to delete this activity");
+  }
+
+  if (activity.type === "Task" && activity.gcalEventId) {
+    await deleteTaskGcalEvent(activity);
   }
 
   await Activity.findByIdAndDelete(id);

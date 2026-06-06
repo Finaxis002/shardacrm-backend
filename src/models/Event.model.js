@@ -24,11 +24,13 @@ const eventSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-assignedTo: [{
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "User",
-  required: [true, "Assigned user is required"],
-}],
+    assignedTo: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        required: [true, "Assigned user is required"],
+      },
+    ],
     doneBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -38,6 +40,32 @@ assignedTo: [{
       type: Date,
       default: null,
     },
+    googleCalendarEvents: [
+      {
+        user: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+        eventId: {
+          type: String,
+          required: true,
+        },
+        calendarId: {
+          type: String,
+          default: "primary",
+        },
+        syncStatus: {
+          type: String,
+          enum: ["synced", "deleted"],
+          default: "synced",
+        },
+        lastSyncedAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
     organization: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Organization",
@@ -54,6 +82,7 @@ assignedTo: [{
 
 eventSchema.index({ organization: 1, eventDate: 1 });
 eventSchema.index({ organization: 1, assignedTo: 1 });
+eventSchema.index({ "googleCalendarEvents.eventId": 1 });
 
 const Event = mongoose.model("Event", eventSchema);
 export default Event;

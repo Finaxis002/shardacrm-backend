@@ -32,16 +32,19 @@ const reminderSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
-    googleCalendarEventId: String,
+    googleCalendarEventId: {
+      type: String,
+      default: "",
+    },
     organization: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Organization",
       required: true,
     },
     gcalEventId: {
-  type: String,
-  default: "",
-},
+      type: String,
+      default: "",
+    },
     notifyUsers: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -55,6 +58,8 @@ const reminderSchema = new mongoose.Schema(
 // Index for reminders that need to be sent
 reminderSchema.index({ reminderDate: 1, isDone: 1 });
 reminderSchema.index({ assignedTo: 1, reminderDate: -1 });
+reminderSchema.index({ gcalEventId: 1 });
+reminderSchema.index({ googleCalendarEventId: 1 });
 
 const Reminder = mongoose.model("Reminder", reminderSchema);
 export default Reminder;
