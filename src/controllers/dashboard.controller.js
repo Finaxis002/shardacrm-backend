@@ -22,19 +22,25 @@ let rangeEnd = new Date();
 rangeEnd.setHours(23, 59, 59, 999);
 
 if (filter === "week") {
-  rangeEnd = new Date(); rangeEnd.setHours(23, 59, 59, 999);
-  rangeStart = new Date();
-  const day = now.getDay();
-  rangeStart.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
-  rangeStart.setHours(0, 0, 0, 0);
+  rangeStart = new Date(now);
+  const day = now.getUTCDay();
+  rangeStart.setUTCDate(now.getUTCDate() - (day === 0 ? 6 : day - 1));
+  rangeStart.setUTCHours(0, 0, 0, 0);
+  rangeEnd = new Date(now);
+  rangeEnd.setUTCHours(23, 59, 59, 999);
+
 } else if (filter === "month") {
-  rangeEnd = new Date(); rangeEnd.setHours(23, 59, 59, 999);
-  rangeStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  rangeStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  rangeEnd = new Date(now);
+  rangeEnd.setUTCHours(23, 59, 59, 999);
+
 } else if (filter === "today") {
-  rangeEnd = new Date(); rangeEnd.setHours(23, 59, 59, 999);
-  rangeStart = new Date(); rangeStart.setHours(0, 0, 0, 0);
+  rangeStart = new Date(now);
+  rangeStart.setUTCHours(0, 0, 0, 0);
+  rangeEnd = new Date(now);
+  rangeEnd.setUTCHours(23, 59, 59, 999);
+
 } else {
-  // "all" — koi date filter nahi
   rangeStart = null;
   rangeEnd = null;
 }
@@ -230,15 +236,17 @@ Payment.aggregate([
 // ═══════════════════════════════════════════════════════════════
   // 🔍 DATA VERIFICATION MONITOR LOGS
   // ═══════════════════════════════════════════════════════════════
-  console.log("------------------------------------");
-  console.log(`📈 METRICS FOR FILTER PROFILE: [${filter?.toUpperCase() || "TODAY"}]`);
-  console.log(`🔹 Total Leads Found     : ${totalLeads}`);
-  console.log(`🔹 Active Leads Found    : ${activeLeads}`);
-  console.log(`🔹 Won/Success Leads     : ${wonLeads}`);
-  console.log(`🔹 Closed Leads Found    : ${closedLeads}`);
-  console.log(`💰 Total Pipeline Value  : ₹${pipelineValueResult[0]?.total || 0}`);
-  console.log(`💳 Collected Payments    : ₹${collectedResult[0]?.total || 0}`);
-  console.log("------------------------------------");
+//   console.log("------------------------------------");
+//   console.log(`📈 METRICS FOR FILTER PROFILE: [${filter?.toUpperCase() || "TODAY"}]`);
+//   console.log(`🔹 Total Leads Found     : ${totalLeads}`);
+//   console.log(`🔹 Active Leads Found    : ${activeLeads}`);
+//   console.log(`🔹 Won/Success Leads     : ${wonLeads}`);
+//   console.log(`🔹 Closed Leads Found    : ${closedLeads}`);
+//   console.log(`💰 Total Pipeline Value  : ₹${pipelineValueResult[0]?.total || 0}`);
+//   console.log(`💳 Collected Payments    : ₹${collectedResult[0]?.total || 0}`);
+//   console.log("------------------------------------");
+//   console.log("rangeStart:", rangeStart);
+// console.log("rangeEnd:", rangeEnd);
   
   res.status(200).json(
     new ApiResponse(
