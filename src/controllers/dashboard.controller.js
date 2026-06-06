@@ -58,6 +58,22 @@ if (filter === "week") {
   );
 
 const dateFilter = rangeStart ? { createdAt: { $gte: rangeStart, $lte: rangeEnd } } : {};
+const statusDateFilter = rangeStart 
+  ? { updatedAt: { $gte: rangeStart, $lte: rangeEnd } } 
+  : {};
+
+  const statsFilterBase = isAdmin
+  ? { organization }
+  : isManager && canViewAll
+    ? { organization }
+    : isManager && viewTeamOnly
+      ? { organization, $or: [{ assignedTo: { $in: allowedIds } }, { coAssignees: { $in: allowedIds } }] }
+      : canViewAll
+        ? { organization }
+        : { organization, $or: [{ assignedTo: userId }, { coAssignees: userId }] };
+
+const wonClosedFilter = { ...statsFilterBase, ...statusDateFilter };
+
   // Filter for VISIBILITY (Includes Co-Assignees) - Used for lists and counts
   const statsFilter = isAdmin
      ? { organization, ...dateFilter }     
@@ -140,9 +156,8 @@ const attributionLeadIdsAllTime = attributionLeadsAllTime.map((l) => l._id);
       status: { $nin: exclusionStatuses },
     }),
 
-    Lead.countDocuments({ ...statsFilter, status: "Success" }),
-
-    Lead.countDocuments({ ...statsFilter, status: "Closed" }),
+Lead.countDocuments({ ...wonClosedFilter, status: "Success" }),
+Lead.countDocuments({ ...wonClosedFilter, status: "Closed" }),
 
     // Monetary values use the strict attribution filter to avoid duplicate counting
     Lead.aggregate([
