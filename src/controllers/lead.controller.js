@@ -104,7 +104,11 @@ export const getLeads = asyncHandler(async (req, res) => {
   // Date Range Filter
   if (dateFrom || dateTo) {
     const dateField =
-      dateFilterType === "closeDate" ? "closeDate" : "createdAt";
+  dateFilterType === "closeDate"
+    ? "closeDate"
+    : dateFilterType === "updatedAt"
+      ? "updatedAt"
+      : "createdAt";
     const dateFilter = {};
 
     if (dateFrom) {
