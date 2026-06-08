@@ -477,8 +477,15 @@ export const updateActivity = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Activity not found");
   }
 
-  // Only creator or admin can edit
-  if (!activity.createdBy.equals(userId) && req.user.role !== "admin") {
+  // Only creator, assigned task owner, or admin/master can edit
+  const isCreator = activity.createdBy.equals(userId);
+  const isTaskAssignee =
+    activity.type === "Task" &&
+    activity.taskAssignedTo &&
+    activity.taskAssignedTo.equals(userId);
+  const isAdmin = req.user.role === "admin" || req.user.role === "master";
+
+  if (!isCreator && !isTaskAssignee && !isAdmin) {
     throw new ApiError(403, "Not authorized to update this activity");
   }
 
@@ -574,8 +581,14 @@ export const deleteActivity = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Activity not found");
   }
 
-  // Only creator or admin can delete
-  if (!activity.createdBy.equals(userId) && req.user.role !== "admin") {
+  const isTaskAssignee =
+    activity.type === "Task" &&
+    activity.taskAssignedTo &&
+    activity.taskAssignedTo.equals(userId);
+  const isAdmin = req.user.role === "admin" || req.user.role === "master";
+
+  // Only creator, assigned task owner, or admin/master can delete
+  if (!activity.createdBy.equals(userId) && !isTaskAssignee && !isAdmin) {
     throw new ApiError(403, "Not authorized to delete this activity");
   }
 
