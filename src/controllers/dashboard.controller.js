@@ -22,24 +22,21 @@ let rangeEnd = new Date();
 rangeEnd.setHours(23, 59, 59, 999);
 
 if (filter === "week") {
-  rangeStart = new Date(now);
-  const day = now.getUTCDay();
-  rangeStart.setUTCDate(now.getUTCDate() - (day === 0 ? 6 : day - 1));
-  rangeStart.setUTCHours(0, 0, 0, 0);
-  rangeEnd = new Date(now);
-  rangeEnd.setUTCHours(23, 59, 59, 999);
-
+  const todayStr = now.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const todayIST = new Date(todayStr + "T00:00:00+05:30");
+  const day = todayIST.getDay();
+  const diffToMonday = day === 0 ? 6 : day - 1;
+  rangeStart = new Date(todayIST.getTime() - diffToMonday * 24 * 60 * 60 * 1000);
+  rangeEnd = new Date(todayIST.getTime() + 24 * 60 * 60 * 1000 - 1);
 } else if (filter === "month") {
-  rangeStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  rangeEnd = new Date(now);
-  rangeEnd.setUTCHours(23, 59, 59, 999);
-
+  const istStr = now.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const [year, month] = istStr.split("-").map(Number);
+  rangeStart = new Date(`${year}-${String(month).padStart(2, "0")}-01T00:00:00+05:30`);
+  rangeEnd = new Date(now.toLocaleString("en-CA", { timeZone: "Asia/Kolkata" }).split(",")[0] + "T23:59:59+05:30");
 } else if (filter === "today") {
-  rangeStart = new Date(now);
-  rangeStart.setUTCHours(0, 0, 0, 0);
-  rangeEnd = new Date(now);
-  rangeEnd.setUTCHours(23, 59, 59, 999);
-
+  const todayIST = new Date(now.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) + "T00:00:00+05:30");
+  rangeStart = todayIST;
+  rangeEnd = new Date(todayIST.getTime() + 24 * 60 * 60 * 1000 - 1);
 } else {
   rangeStart = null;
   rangeEnd = null;

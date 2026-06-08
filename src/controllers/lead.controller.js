@@ -115,14 +115,15 @@ export const getLeads = asyncHandler(async (req, res) => {
     const dateFilter = {};
 
     if (dateFrom) {
-      dateFilter.$gte = new Date(dateFrom);
-    }
-    if (dateTo) {
-      const endDate = new Date(dateTo);
-      endDate.setHours(23, 59, 59, 999);
-      dateFilter.$lte = endDate;
-    }
-
+  // "2026-06-08" → IST midnight = UTC 2026-06-07T18:30:00Z
+  const fromDate = new Date(dateFrom + "T00:00:00+05:30");
+  dateFilter.$gte = fromDate;
+}
+if (dateTo) {
+  // "2026-06-08" → IST end of day = UTC 2026-06-08T18:29:59Z
+  const endDate = new Date(dateTo + "T23:59:59+05:30");
+  dateFilter.$lte = endDate;
+}
     if (Object.keys(dateFilter).length > 0) {
       queryConditions.push({ [dateField]: dateFilter });
     }
@@ -2023,12 +2024,8 @@ export const getLeadIds = asyncHandler(async (req, res) => {
     const dateField =
       dateFilterType === "closeDate" ? "closeDate" : "createdAt";
     const dateFilter = {};
-    if (dateFrom) dateFilter.$gte = new Date(dateFrom);
-    if (dateTo) {
-      const endDate = new Date(dateTo);
-      endDate.setHours(23, 59, 59, 999);
-      dateFilter.$lte = endDate;
-    }
+    if (dateFrom) dateFilter.$gte = new Date(dateFrom + "T00:00:00+05:30");
+if (dateTo) dateFilter.$lte = new Date(dateTo + "T23:59:59+05:30");
     if (Object.keys(dateFilter).length > 0) {
       filter[dateField] = dateFilter;
     }
