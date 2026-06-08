@@ -19,43 +19,43 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
 
   const { filter } = req.query;
   const now = new Date();
-  let rangeStart = new Date();
-  let rangeEnd = new Date();
-  rangeEnd.setHours(23, 59, 59, 999);
+
+  const getISTMidnight = (date) => {
+    const dateStr = date.toLocaleDateString("en-CA", {
+      timeZone: "Asia/Kolkata",
+    });
+    return new Date(`${dateStr}T00:00:00+05:30`);
+  };
+
+  const getEndOfDay = (date) =>
+    new Date(date.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+  const getWeekStart = (date) => {
+    const day = date.getDay();
+    const diffToMonday = day === 0 ? 6 : day - 1;
+    return new Date(date.getTime() - diffToMonday * 24 * 60 * 60 * 1000);
+  };
+
+  let rangeStart = null;
+  let rangeEnd = null;
 
   if (filter === "week") {
-    const todayStr = now.toLocaleDateString("en-CA", {
-      timeZone: "Asia/Kolkata",
-    });
-    const todayIST = new Date(todayStr + "T00:00:00+05:30");
-    const day = todayIST.getDay();
-    const diffToMonday = day === 0 ? 6 : day - 1;
-    rangeStart = new Date(
-      todayIST.getTime() - diffToMonday * 24 * 60 * 60 * 1000,
-    );
-    rangeEnd = new Date(todayIST.getTime() + 24 * 60 * 60 * 1000 - 1);
+    const todayIST = getISTMidnight(now);
+    rangeStart = getWeekStart(todayIST);
+    rangeEnd = getEndOfDay(todayIST);
   } else if (filter === "month") {
-    const istStr = now.toLocaleDateString("en-CA", {
-      timeZone: "Asia/Kolkata",
-    });
-    const [year, month] = istStr.split("-").map(Number);
+    const todayIST = getISTMidnight(now);
     rangeStart = new Date(
-      `${year}-${String(month).padStart(2, "0")}-01T00:00:00+05:30`,
+      `${todayIST.getFullYear()}-${String(todayIST.getMonth() + 1).padStart(
+        2,
+        "0",
+      )}-01T00:00:00+05:30`,
     );
-    rangeEnd = new Date(
-      now.toLocaleString("en-CA", { timeZone: "Asia/Kolkata" }).split(",")[0] +
-        "T23:59:59+05:30",
-    );
+    rangeEnd = getEndOfDay(todayIST);
   } else if (filter === "today") {
-    const todayIST = new Date(
-      now.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) +
-        "T00:00:00+05:30",
-    );
+    const todayIST = getISTMidnight(now);
     rangeStart = todayIST;
-    rangeEnd = new Date(todayIST.getTime() + 24 * 60 * 60 * 1000 - 1);
-  } else {
-    rangeStart = null;
-    rangeEnd = null;
+    rangeEnd = getEndOfDay(todayIST);
   }
 
   let subordinateIds = [];
@@ -128,20 +128,40 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
     : isManager && canViewAll
       ? { organization, ...dateFilter }
       : isManager && viewTeamOnly
-        ? { organization, ...dateFilter, assignedTo: { $in: allowedIds } }
+        ? {
+            organization,
+            ...dateFilter,
+            $or: [
+              { assignedTo: { $in: allowedIds } },
+              { coAssignees: { $in: allowedIds } },
+            ],
+          }
         : canViewAll
           ? { organization, ...dateFilter }
-          : { organization, ...dateFilter, assignedTo: userId };
+          : {
+              organization,
+              ...dateFilter,
+              $or: [{ assignedTo: userId }, { coAssignees: userId }],
+            };
 
   const attributionFilterAllTime = isAdmin
     ? { organization }
     : isManager && canViewAll
       ? { organization }
       : isManager && viewTeamOnly
-        ? { organization, assignedTo: { $in: allowedIds } }
+        ? {
+            organization,
+            $or: [
+              { assignedTo: { $in: allowedIds } },
+              { coAssignees: { $in: allowedIds } },
+            ],
+          }
         : canViewAll
           ? { organization }
-          : { organization, assignedTo: userId };
+          : {
+              organization,
+              $or: [{ assignedTo: userId }, { coAssignees: userId }],
+            };
 
   const attributionLeadsAllTime = await Lead.find(attributionFilterAllTime)
     .select("_id")
