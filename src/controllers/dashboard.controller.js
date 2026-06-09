@@ -31,8 +31,10 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
     new Date(date.getTime() + 24 * 60 * 60 * 1000 - 1);
 
   const getWeekStart = (date) => {
-    const day = date.getDay();
-    const diffToMonday = day === 0 ? 6 : day - 1;
+    const istDay = new Date(
+      date.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }),
+    ).getDay();
+    const diffToMonday = istDay === 0 ? 6 : istDay - 1;
     return new Date(date.getTime() - diffToMonday * 24 * 60 * 60 * 1000);
   };
 
