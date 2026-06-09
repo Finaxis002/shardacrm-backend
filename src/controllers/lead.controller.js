@@ -1026,10 +1026,10 @@ export const updateLead = asyncHandler(async (req, res) => {
   ];
 
   allowedFields.forEach((field) => {
-    if (req.body[field] !== undefined) {
-      lead[field] = req.body[field];
-    }
-  });
+  if (req.body[field] !== undefined) {
+    lead[field] = req.body[field] === "" ? null : req.body[field];
+  }
+});
 
   // ── Product array handle ──
   if (req.body.product !== undefined) {
@@ -2060,4 +2060,101 @@ if (dateTo) dateFilter.$lte = new Date(dateTo + "T23:59:59+05:30");
   const ids = leads.map((l) => l._id);
 
   res.status(200).json(new ApiResponse(200, { ids }, "Lead IDs fetched"));
+});
+/**
+ * Get leads analytics (grouped by date)
+ * @route GET /api/v1/leads/analytics
+ * @access Private
+ */
+export const getLeadsAnalytics = asyncHandler(async (req, res) => {
+  const { dateFrom, dateTo } = req.query;
+  const organization = req.user.organization;
+  const userId = req.user._id;
+  const isAdmin = req.user.role === "admin";
+  const canViewAllLeads =
+    isAdmin || (await canUser(req.user, organization, "view_all_leads"));
+
+  const matchConditions = [{ organization }];
+
+  // Access control
+  if (!canViewAllLeads) {
+    matchConditions.push({
+      $or: [{ assignedTo: userId }, { coAssignees: userId }],
+    });
+  }
+
+  // Date filter
+  if (dateFrom || dateTo) {
+    const dateFilter = {};
+    if (dateFrom) dateFilter.$gte = new Date(dateFrom + "T00:00:00+05:30");
+    if (dateTo) dateFilter.$lte = new Date(dateTo + "T23:59:59+05:30");
+    matchConditions.push({ createdAt: dateFilter });
+  }
+
+  const match = { $and: matchConditions };
+
+  const grouped = await Lead.aggregate([
+    { $match: match },
+    {
+      $group: {
+        _id: {
+          $dateToString: {
+            format: "%Y-%m-%d",
+            date: "$createdAt",
+            timezone: "Asia/Kolkata",
+          },
+        },
+        leads: { $sum: 1 },
+        value: {
+          $sum: {
+            $convert: {
+              input: { $ifNull: ["$dealValue", 0] },
+              to: "double",
+              onError: 0,
+              onNull: 0,
+            },
+          },
+        },
+        statusCounts: { $push: "$status" },
+        sourceCounts: { $push: "$source" },
+      },
+    },
+    { $sort: { _id: 1 } },
+  ]);
+
+  // Status breakdown
+  const statusMap = {};
+  const sourceMap = {};
+  grouped.forEach((day) => {
+    day.statusCounts.forEach((s) => {
+      statusMap[s] = (statusMap[s] || 0) + 1;
+    });
+    day.sourceCounts.forEach((s) => {
+      const key = s || "Other";
+      sourceMap[key] = (sourceMap[key] || 0) + 1;
+    });
+  });
+
+  const timeline = grouped.map((d) => ({
+    date: new Date(d._id + "T00:00:00+05:30").toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      timeZone: "Asia/Kolkata",
+    }),
+    leads: d.leads,
+    value: d.value,
+    ts: new Date(d._id + "T00:00:00+05:30").getTime(),
+  }));
+
+  const statusBreakdown = Object.entries(statusMap)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value);
+
+  const sourceBreakdown = Object.entries(sourceMap)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value);
+
+  res.status(200).json(
+    new ApiResponse(200, { timeline, statusBreakdown, sourceBreakdown }, "Analytics fetched"),
+  );
 });

@@ -22,6 +22,7 @@ import {
 import { verifyJWT } from "../middleware/auth.middleware.js";
 import { checkPermission } from "../middleware/rbac.middleware.js";
 import { validateRequest } from "../middleware/validation.middleware.js";
+import { getLeadsAnalytics } from "../controllers/lead.controller.js";
 import {
   createLeadValidator,
   updateLeadValidator,
@@ -41,7 +42,7 @@ router.get("/ids", getLeadIds);
 router.get("/", validateRequest(searchLeadsValidator, "query"), getLeads);
 
 router.get("/stats/overview", getLeadStats);
-
+router.get("/analytics", getLeadsAnalytics);
 router.get("/:id", getLead);
 router.post("/:id/recordings/upload", uploadRecordingMiddleware, uploadRecordingFile);
 router.delete("/:id/recordings/:filename", deleteRecording);
