@@ -254,14 +254,27 @@ if (dateTo) {
                   : sortBy === "largest"
                     ? [{ $sort: { dealValue: -1, createdAt: -1 } }]
                     : sortBy === "upcoming"
-                      ? [
-                          {
-                            $sort: {
-                              "reminders.0.reminderDate": 1,
-                              createdAt: -1,
-                            },
-                          },
-                        ]
+  ? [
+      {
+        $match: {
+          status: { $nin: ["Closed", "Success", "Details Shared", "Final Discussion", "Interested", "Did Not Answered"] },
+        },
+      },
+      {
+        $lookup: {
+          from: "activities",
+          localField: "_id",
+          foreignField: "leadId",
+          as: "_activityCheck",
+        },
+      },
+      {
+        $match: {
+          "_activityCheck.1": { $exists: false },
+        },
+      },
+      { $sort: { createdAt: -1 } },
+    ]
                       : [{ $sort: { updatedAt: -1 } }]), // default
           { $skip: skip },
           { $limit: pageLimit },
