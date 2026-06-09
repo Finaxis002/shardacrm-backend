@@ -168,12 +168,11 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
     .lean();
   const attributionLeadIdsAllTime = attributionLeadsAllTime.map((l) => l._id);
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  // ✅ ADD: todayString for Event query
-  const todayString = new Date().toLocaleDateString("en-CA", {
+  const todayStartIST = getISTMidnight(now);
+  const tomorrowStartIST = new Date(
+    todayStartIST.getTime() + 24 * 60 * 60 * 1000,
+  );
+  const todayString = todayStartIST.toLocaleDateString("en-CA", {
     timeZone: "Asia/Kolkata",
   });
 
@@ -234,7 +233,7 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
     Reminder.find({
       organization,
       isDone: false,
-      reminderDate: { $gte: today, $lt: tomorrow },
+      reminderDate: { $gte: todayStartIST, $lt: tomorrowStartIST },
       $or: [{ assignedTo: userId }, { notifyUsers: userId }],
     })
       .populate("leadId", "name phone")
@@ -257,7 +256,7 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
       organization,
       type: "Task",
       taskCompleted: false,
-      taskDueDate: { $gte: today, $lt: tomorrow },
+      taskDueDate: { $gte: todayStartIST, $lt: tomorrowStartIST },
       taskAssignedTo: userId,
     })
       .populate("taskAssignedTo", "name email")
