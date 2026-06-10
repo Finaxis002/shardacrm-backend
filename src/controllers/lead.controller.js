@@ -1992,6 +1992,112 @@ export const bulkAssignLeads = asyncHandler(async (req, res) => {
       ),
     );
 });
+/**
+ * Bulk update lead status
+ * @route PATCH /api/v1/leads/bulk/status
+ * @access Private
+ */
+export const bulkUpdateStatus = asyncHandler(async (req, res) => {
+  const { ids, status } = req.body;
+  const organization = req.user.organization;
+  const userId = req.user._id;
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new ApiError(400, "No lead IDs provided");
+  }
+  if (!status) {
+    throw new ApiError(400, "status is required");
+  }
+
+  const canEdit =
+    req.user.role === "admin" ||
+    (await canUser(req.user, organization, "edit_any_lead"));
+  if (!canEdit) {
+    throw new ApiError(403, "Not authorized to update lead status");
+  }
+
+  await Lead.updateMany(
+    { _id: { $in: ids }, organization },
+    { $set: { status } },
+  );
+
+  const activities = ids.map((leadId) => ({
+    leadId,
+    type: "Status Change",
+    text: `Status bulk updated to ${status} by ${req.user.name}`,
+    statusTo: status,
+    createdBy: userId,
+    organization,
+  }));
+  await Activity.insertMany(activities);
+
+  logger.info(
+    `Bulk status updated to "${status}" for ${ids.length} leads by user ${userId}`,
+  );
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { updated: ids.length },
+      `${ids.length} leads updated to "${status}"`,
+    ),
+  );
+});
+/**
+ * Bulk update lead priority
+ * @route PATCH /api/v1/leads/bulk/priority
+ * @access Private
+ */
+export const bulkUpdatePriority = asyncHandler(async (req, res) => {
+  const { ids, priority } = req.body;
+  const organization = req.user.organization;
+  const userId = req.user._id;
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw new ApiError(400, "No lead IDs provided");
+  }
+  if (!priority) {
+    throw new ApiError(400, "priority is required");
+  }
+
+  const validPriorities = ["Urgent", "High", "Normal"];
+  if (!validPriorities.includes(priority)) {
+    throw new ApiError(400, "Invalid priority value");
+  }
+
+  const canEdit =
+    req.user.role === "admin" ||
+    (await canUser(req.user, organization, "edit_any_lead"));
+  if (!canEdit) {
+    throw new ApiError(403, "Not authorized to update lead priority");
+  }
+
+  await Lead.updateMany(
+    { _id: { $in: ids }, organization },
+    { $set: { priority } },
+  );
+
+  const activities = ids.map((leadId) => ({
+    leadId,
+    type: "Note",
+    text: `Priority bulk updated to ${priority} by ${req.user.name}`,
+    createdBy: userId,
+    organization,
+  }));
+  await Activity.insertMany(activities);
+
+  logger.info(
+    `Bulk priority updated to "${priority}" for ${ids.length} leads by user ${userId}`,
+  );
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      { updated: ids.length },
+      `${ids.length} leads updated to "${priority}" priority`,
+    ),
+  );
+});
 
 /**
  * Get lead IDs for bulk operations with filters

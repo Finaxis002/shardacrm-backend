@@ -17,7 +17,9 @@ import {
   getLeadStats,
   bulkAssignLeads,
   bulkDeleteLeads,
-  getLeadIds
+  getLeadIds,
+  bulkUpdateStatus,    
+  bulkUpdatePriority,
 } from "../controllers/lead.controller.js";
 import { verifyJWT } from "../middleware/auth.middleware.js";
 import { checkPermission } from "../middleware/rbac.middleware.js";
@@ -37,6 +39,8 @@ const router = Router();
 router.use(verifyJWT);
 router.delete("/bulk", bulkDeleteLeads);
 router.patch("/bulk/assign", bulkAssignLeads);
+router.patch("/bulk/status", bulkUpdateStatus); 
+router.patch("/bulk/priority", bulkUpdatePriority); 
 router.get("/ids", getLeadIds);
 // GET routes
 router.get("/", validateRequest(searchLeadsValidator, "query"), getLeads);
