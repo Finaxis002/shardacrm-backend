@@ -428,7 +428,7 @@ export const saveMapping = asyncHandler(async (req, res) => {
 
 sync.fieldMappings = fieldMappings;
 sync.fixedValues = fixedValues;
-sync.isActive = true;
+sync.isActive = false;
 await sync.save();
 
 
