@@ -19,6 +19,7 @@ export const config = {
 
   // CORS
   corsOrigin: process.env.CORS_ORIGIN?.split(",") || [
+    "https://shardacrm.sharda.co.in",
     "https://shardacrm-frontend.onrender.com",
     "http://localhost:3000",
   ],
@@ -83,6 +84,12 @@ export const config = {
 
   GOOGLE_SERVICE_ACCOUNT_PATH: process.env.GOOGLE_SERVICE_ACCOUNT_PATH,
   GOOGLE_SERVICE_ACCOUNT_JSON: process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
+
+  // Meta (Facebook) API
+  META_VERIFY_TOKEN: process.env.META_VERIFY_TOKEN,
+  META_PAGE_ACCESS_TOKEN: process.env.META_PAGE_ACCESS_TOKEN,
+  WHATSAPP_PHONE_NUMBER_ID: process.env.WHATSAPP_PHONE_NUMBER_ID,
+  META_APP_SECRET: process.env.META_APP_SECRET,
 
   // Logging
   logLevel: process.env.LOG_LEVEL || "debug",
