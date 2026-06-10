@@ -26,6 +26,7 @@ import metaWebhookRoutes from "./routes/metaWebhook.routes.js";
 import { fileURLToPath } from "url";
 import path from "path";
 import crossSellRouter from "./routes/Crosssell.routes.js";
+import whatsappRouter from "./routes/whatsapp.routes.js";
 import startEmailScheduler from "./utils/emailScheduler.js";
 import { startReactivationCron } from "./cron/reactivationCron.js";
 const __filename = fileURLToPath(import.meta.url);
@@ -50,6 +51,16 @@ app.use(
   express.raw({ type: "application/json" }),
   (req, res, next) => {
     req.rawBody = req.body.toString();
+    next();
+  },
+);
+
+// WhatsApp webhook raw body parser for signature verification
+app.use(
+  "/api/v1/whatsapp/webhook",
+  express.raw({ type: "application/json" }),
+  (req, res, next) => {
+    req.rawBody = req.body;
     next();
   },
 );
@@ -82,10 +93,15 @@ app.use("/api/v1/events", eventRouter);
 app.use("/api/v1/integrations", integrationRoutes);
 app.use("/api/v1/auth", logoutOtpRoutes);
 app.use("/api/v1/cross-sell", crossSellRouter);
-app.use("/uploads/recordings", (req, res, next) => {
-  res.header("Cross-Origin-Resource-Policy", "cross-origin");
-  next();
-}, express.static(path.join(process.cwd(), "src", "uploads", "recordings")));
+app.use("/api/v1/whatsapp", whatsappRouter);
+app.use(
+  "/uploads/recordings",
+  (req, res, next) => {
+    res.header("Cross-Origin-Resource-Policy", "cross-origin");
+    next();
+  },
+  express.static(path.join(process.cwd(), "src", "uploads", "recordings")),
+);
 // New Live Test Route
 app.get("/api/v1/test-live", (req, res) => {
   res.status(200).json({
