@@ -165,6 +165,11 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
               $or: [{ assignedTo: userId }, { coAssignees: userId }],
             };
 
+  const teamPerformanceFilter = {
+    organization,
+    ...dateFilter,
+  };
+
   const attributionLeadsAllTime = await Lead.find(attributionFilterAllTime)
     .select("_id")
     .lean();
@@ -218,7 +223,6 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
     ]),
   ]);
 
-  // ✅ ADD: todayEvents and todayTasks in second Promise.all
   const [
     recentLeads,
     todayReminders,
@@ -242,7 +246,6 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
       .sort({ reminderTime: 1 })
       .lean(),
 
-    // ✅ NEW
     Event.find({
       organization,
       isDone: false,
@@ -253,7 +256,6 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
       .sort({ eventTime: 1 })
       .lean(),
 
-    // ✅ NEW
     Activity.find({
       organization,
       type: "Task",
@@ -267,7 +269,7 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
       .lean(),
 
     Lead.aggregate([
-      { $match: statsFilter },
+      { $match: teamPerformanceFilter },
       {
         $group: {
           _id: "$assignedTo",
@@ -309,8 +311,8 @@ export const getDashboardOverview = asyncHandler(async (req, res) => {
         collectedAmount: collectedResult[0]?.total || 0,
         todayRemindersCount: todayReminders.length,
         todayReminders,
-        todayEvents, // ✅ NEW
-        todayTasks, // ✅ NEW
+        todayEvents,
+        todayTasks,
         recentLeads,
         teamPerformance,
       },
