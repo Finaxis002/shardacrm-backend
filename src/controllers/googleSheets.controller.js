@@ -157,9 +157,6 @@ const rowToLead = (row, fieldMappings, fixedValues = []) => {
 };
 
 const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organization, createdBy, assignedTo, syncId, sheetName }) => {
-  console.log("Total rows to process:", rows.length);
-  console.log("Sample row:", rows[0]);
-  console.log("💥 saveLeadsFromRows sheetName received:", sheetName);
 
   // Distribution rule dhundho
   let distributionRule = null;
@@ -171,7 +168,7 @@ const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organizatio
         ruleType: distributionRule.rule,
       });
     } else {
-      console.log("No active distribution rule found for syncId:", syncId);
+      
     }
   }
 
@@ -315,7 +312,7 @@ export const getConnections = asyncHandler(async (req, res) => {
  * Body: { googleEmail, sheetId, sheetName, tabName, sheetUrl, accessToken }
  */
 export const registerSheet = asyncHandler(async (req, res) => {
-  console.log("Frontend se aaya data:", req.body);
+  
   const { googleEmail, sheetId, sheetName, tabName, sheetUrl, accessToken } =
     req.body;
   const organization = req.user.organization;
@@ -332,7 +329,7 @@ export const registerSheet = asyncHandler(async (req, res) => {
   // Fetch first 3 rows to get headers + sample data
   const rows = await fetchSheetRows(sheetId, tabName, accessToken, 1, 4);
   if (!rows.length) throw new ApiError(400, "Sheet is empty or unreadable");
-  console.log("Rows fetched:", rows);
+  
   const headers = rows[0] || [];
   const sampleRow = rows[1] || [];
 
@@ -464,11 +461,11 @@ const runFirstImport = async ({ sync, organization, createdBy }) => {
   const fieldMappings = freshSync?.fieldMappings || sync.fieldMappings;
   const fixedValues = freshSync?.fixedValues || sync.fixedValues;
   
-  console.log("🔍 runFirstImport sheetName:", sheetName);
+  
   
   try {
     const rows = await fetchSheetRows(sync.sheetId, sync.tabName, sync.accessToken, 2, 10000);
-    console.log("First import - rows fetched:", rows.length, "syncId:", sync._id);
+    
 
  const { imported, skipped } = await saveLeadsFromRows({
   rows,
@@ -564,7 +561,7 @@ export const getSyncStatus = asyncHandler(async (req, res) => {
  * Syncs new rows for a single GoogleSheetSync document
  */
 export const syncNewRows = async (sync) => {
-    console.log("🔍 syncNewRows sheetName:", sync.sheetName);
+    
   try {
     const fromRow = sync.lastRowSynced + 1;
 

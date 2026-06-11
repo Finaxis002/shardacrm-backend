@@ -1,14 +1,3 @@
-/**
- * sheetPoller.job.js
- * ─────────────────
- * Har 1 minute mein active Google Sheet syncs check karta hai
- * aur naye rows ko leads mein import karta hai.
- *
- * Usage (app.js mein):
- *   import { startSheetPoller } from "../jobs/sheetPoller.job.js";
- *   startSheetPoller();
- */
-
 import GoogleSheetSync from "../src/models/GoogleSheetSync.model.js";
 import { syncNewRows }  from "../src/controllers/googleSheets.controller.js";
 import logger           from "../src/utils/logger.js";
@@ -43,9 +32,13 @@ const pollAllActiveSheets = async () => {
     logger.info(`[SheetPoller] Checking ${activeSyncs.length} active sheet(s)...`);
 
     // Run all syncs in parallel (limit concurrency if needed)
-    await Promise.allSettled(
-      activeSyncs.map(sync => syncNewRows(sync))
-    );
+    for (const sync of activeSyncs) {
+      try {
+        await syncNewRows(sync);
+      } catch (err) {
+        logger.error(`[SheetPoller] Error syncing ${sync._id}: ${err.message}`);
+      }
+    }
 
     logger.info("[SheetPoller] Tick complete");
   } catch (err) {
