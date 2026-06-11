@@ -264,7 +264,15 @@ const saveLeadsFromRows = async ({ rows, fieldMappings, fixedValues, organizatio
       customFields: leadData.customFields || {},
     });
 
-    await lead.save();
+   try {
+      await lead.save();
+    } catch (err) {
+      if (err.code === 11000) {
+        skipped++;
+        continue;
+      }
+      throw err;
+    }
 
 
     if (!isRepeat) {
@@ -425,7 +433,9 @@ export const saveMapping = asyncHandler(async (req, res) => {
 
 sync.fieldMappings = fieldMappings;
 sync.fixedValues = fixedValues;
-sync.isActive = false;
+if (!isEdit) {
+  sync.isActive = false; 
+}
 await sync.save();
 
 
@@ -561,12 +571,20 @@ export const getSyncStatus = asyncHandler(async (req, res) => {
  * Syncs new rows for a single GoogleSheetSync document
  */
 export const syncNewRows = async (sync) => {
-    
-  try {
+
+  // ✅ Race condition fix
+  const freshSync = await GoogleSheetSync.findById(sync._id).select("isSyncing").lean();
+  if (freshSync?.isSyncing) {
+    logger.info(`Sync ${sync._id} already running, skipping`);
+    return;
+  }
+  await GoogleSheetSync.findByIdAndUpdate(sync._id, { isSyncing: true });
+
+try {
     const fromRow = sync.lastRowSynced + 1;
 
-      const freshSync = await GoogleSheetSync.findById(sync._id).lean();
-    const sheetName = freshSync?.sheetName || sync.sheetName || "";
+      const syncDetails = await GoogleSheetSync.findById(sync._id).lean();
+    const sheetName = syncDetails?.sheetName || sync.sheetName || "";
     
     // DEBUG - baad mein hatana hai
     logger.info(
@@ -583,6 +601,7 @@ export const syncNewRows = async (sync) => {
 
     if (!rows.length) {
       logger.info(`No new rows for sync ${sync._id}`);
+      await GoogleSheetSync.findByIdAndUpdate(sync._id, { isSyncing: false }); // ✅
       return;
     }
 
@@ -597,11 +616,12 @@ export const syncNewRows = async (sync) => {
   sheetName,
 });
 
-    sync.lastRowSynced += rows.length;
+  sync.lastRowSynced += rows.length;
     sync.lastSyncedAt = new Date();
     sync.totalImported += imported;
     sync.lastError = null;
     await sync.save();
+    await GoogleSheetSync.findByIdAndUpdate(sync._id, { isSyncing: false }); // ✅
 
     if (imported > 0) {
       logger.info(
@@ -611,6 +631,7 @@ export const syncNewRows = async (sync) => {
   } catch (err) {
     sync.lastError = err.message;
     await sync.save();
+    await GoogleSheetSync.findByIdAndUpdate(sync._id, { isSyncing: false }); // ✅
     logger.error(`Auto-sync error for ${sync._id}: ${err.message}`);
   }
 };
