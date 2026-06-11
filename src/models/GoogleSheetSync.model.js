@@ -36,8 +36,10 @@ const googleSheetSyncSchema = new mongoose.Schema(
     fieldMappings: [fieldMappingSchema],
     fixedValues:   [fixedValueSchema],
 
+
     /* Sync state */
     isActive:      { type: Boolean, default: true  },
+    isSyncing:     { type: Boolean, default: false }, // ✅ ADD
     lastRowSynced: { type: Number,  default: 1     },
     lastSyncedAt:  { type: Date,    default: null  },
     lastError:     { type: String,  default: null  },
