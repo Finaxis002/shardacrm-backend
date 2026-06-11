@@ -115,15 +115,15 @@ export const getLeads = asyncHandler(async (req, res) => {
     const dateFilter = {};
 
     if (dateFrom) {
-  // "2026-06-08" → IST midnight = UTC 2026-06-07T18:30:00Z
-  const fromDate = new Date(dateFrom + "T00:00:00+05:30");
-  dateFilter.$gte = fromDate;
-}
-if (dateTo) {
-  // "2026-06-08" → IST end of day = UTC 2026-06-08T18:29:59Z
-  const endDate = new Date(dateTo + "T23:59:59+05:30");
-  dateFilter.$lte = endDate;
-}
+      
+      const fromDate = new Date(dateFrom + "T00:00:00+05:30");
+      dateFilter.$gte = fromDate;
+    }
+    if (dateTo) {
+      
+      const endDate = new Date(dateTo + "T23:59:59+05:30");
+      dateFilter.$lte = endDate;
+    }
     if (Object.keys(dateFilter).length > 0) {
       queryConditions.push({ [dateField]: dateFilter });
     }
@@ -248,33 +248,65 @@ if (dateTo) {
             : sortBy === "newest"
               ? [{ $sort: { createdAt: -1 } }]
               : sortBy === "active"
-                ? [{ $sort: { updatedAt: -1 } }]
+                ? [
+                    
+                    {
+                      $lookup: {
+                        from: "activities",
+                        localField: "_id",
+                        foreignField: "leadId",
+                        as: "_allActivities",
+                      },
+                    },
+                    {
+                      $addFields: {
+                        _lastContactedAt: { $max: "$_allActivities.createdAt" },
+                        _activityCount: { $size: "$_allActivities" },
+                      },
+                    },
+                    
+                    {
+                      $match: {
+                        _activityCount: { $gt: 1 }, 
+                      },
+                    },
+                    { $sort: { _lastContactedAt: -1 } },
+                  ]
                 : sortBy === "stale"
                   ? [{ $sort: { updatedAt: 1 } }]
                   : sortBy === "largest"
                     ? [{ $sort: { dealValue: -1, createdAt: -1 } }]
                     : sortBy === "upcoming"
-  ? [
-      {
-        $match: {
-          status: { $nin: ["Closed", "Success", "Details Shared", "Final Discussion", "Interested", "Did Not Answered"] },
-        },
-      },
-      {
-        $lookup: {
-          from: "activities",
-          localField: "_id",
-          foreignField: "leadId",
-          as: "_activityCheck",
-        },
-      },
-      {
-        $match: {
-          "_activityCheck.1": { $exists: false },
-        },
-      },
-      { $sort: { createdAt: -1 } },
-    ]
+                      ? [
+                          {
+                            $match: {
+                              status: {
+                                $nin: [
+                                  "Closed",
+                                  "Success",
+                                  "Details Shared",
+                                  "Final Discussion",
+                                  "Interested",
+                                  "Did Not Answered",
+                                ],
+                              },
+                            },
+                          },
+                          {
+                            $lookup: {
+                              from: "activities",
+                              localField: "_id",
+                              foreignField: "leadId",
+                              as: "_activityCheck",
+                            },
+                          },
+                          {
+                            $match: {
+                              "_activityCheck.1": { $exists: false },
+                            },
+                          },
+                          { $sort: { createdAt: -1 } },
+                        ]
                       : [{ $sort: { updatedAt: -1 } }]), // default
           { $skip: skip },
           { $limit: pageLimit },
@@ -1039,10 +1071,10 @@ export const updateLead = asyncHandler(async (req, res) => {
   ];
 
   allowedFields.forEach((field) => {
-  if (req.body[field] !== undefined) {
-    lead[field] = req.body[field] === "" ? null : req.body[field];
-  }
-});
+    if (req.body[field] !== undefined) {
+      lead[field] = req.body[field] === "" ? null : req.body[field];
+    }
+  });
 
   // ── Product array handle ──
   if (req.body.product !== undefined) {
@@ -2035,13 +2067,15 @@ export const bulkUpdateStatus = asyncHandler(async (req, res) => {
     `Bulk status updated to "${status}" for ${ids.length} leads by user ${userId}`,
   );
 
-  res.status(200).json(
-    new ApiResponse(
-      200,
-      { updated: ids.length },
-      `${ids.length} leads updated to "${status}"`,
-    ),
-  );
+  res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        { updated: ids.length },
+        `${ids.length} leads updated to "${status}"`,
+      ),
+    );
 });
 /**
  * Bulk update lead priority
@@ -2090,13 +2124,15 @@ export const bulkUpdatePriority = asyncHandler(async (req, res) => {
     `Bulk priority updated to "${priority}" for ${ids.length} leads by user ${userId}`,
   );
 
-  res.status(200).json(
-    new ApiResponse(
-      200,
-      { updated: ids.length },
-      `${ids.length} leads updated to "${priority}" priority`,
-    ),
-  );
+  res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        { updated: ids.length },
+        `${ids.length} leads updated to "${priority}" priority`,
+      ),
+    );
 });
 
 /**
@@ -2144,7 +2180,7 @@ export const getLeadIds = asyncHandler(async (req, res) => {
       dateFilterType === "closeDate" ? "closeDate" : "createdAt";
     const dateFilter = {};
     if (dateFrom) dateFilter.$gte = new Date(dateFrom + "T00:00:00+05:30");
-if (dateTo) dateFilter.$lte = new Date(dateTo + "T23:59:59+05:30");
+    if (dateTo) dateFilter.$lte = new Date(dateTo + "T23:59:59+05:30");
     if (Object.keys(dateFilter).length > 0) {
       filter[dateField] = dateFilter;
     }
@@ -2273,7 +2309,13 @@ export const getLeadsAnalytics = asyncHandler(async (req, res) => {
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value);
 
-  res.status(200).json(
-    new ApiResponse(200, { timeline, statusBreakdown, sourceBreakdown }, "Analytics fetched"),
-  );
+  res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        { timeline, statusBreakdown, sourceBreakdown },
+        "Analytics fetched",
+      ),
+    );
 });
