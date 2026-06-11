@@ -169,8 +169,12 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
       /invalid oauth access token|cannot parse access token/i.test(
         String(externalMessage),
       );
+    const templateWindowError =
+      /template|24(?:\s|-)?hour|customer care window|window has expired|HSM|business template/i.test(
+        String(externalMessage),
+      );
 
-    if (invalidTokenError) {
+    if (invalidTokenError || templateWindowError) {
       const fallbackMessage = await WhatsappMessage.create({
         leadId: lead._id,
         organization: lead.organization,
@@ -190,12 +194,13 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
       );
     }
 
-    throw new ApiError(
-      invalidTokenError ? 500 : externalStatus,
-      invalidTokenError
-        ? "WhatsApp API token invalid or not configured. Please check META_PAGE_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID."
-        : externalMessage,
-    );
+    const errorMessage = invalidTokenError
+      ? "WhatsApp API token invalid or not configured. Please check META_PAGE_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID."
+      : templateWindowError
+        ? "WhatsApp can only send messages after 24 hours using a template. Please open direct WhatsApp chat or use a template message."
+        : externalMessage;
+
+    throw new ApiError(invalidTokenError ? 500 : externalStatus, errorMessage);
   }
 
   const metaMessageId = cloudResponse.messages?.[0]?.id || "";
