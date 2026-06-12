@@ -1909,6 +1909,7 @@ export const getLeadStats = asyncHandler(async (req, res) => {
 export const bulkDeleteLeads = asyncHandler(async (req, res) => {
   const { ids } = req.body;
   const organization = req.user.organization;
+   const userId = req.user._id;
 
   if (!Array.isArray(ids) || ids.length === 0) {
     throw new ApiError(400, "No lead IDs provided");
@@ -1949,9 +1950,30 @@ export const bulkDeleteLeads = asyncHandler(async (req, res) => {
     Reminder.deleteMany({ leadId: { $in: ids }, organization }),
     Payment.deleteMany({ leadId: { $in: ids }, organization }),
   ]);
+  const leadsToDelete = await Lead.find({
+  _id: { $in: ids }, organization
+}).select("name");
 
+const leadNames = leadsToDelete.map((l) => l.name).join(", ");
+  const senderName = req.user.name || req.user.email || "Someone";
   const result = await Lead.deleteMany({ _id: { $in: ids }, organization });
+const admins = await User.find({
+    organization,
+    role: "admin",
+    _id: { $ne: userId },
+  }).select("_id");
 
+  if (admins.length) {
+    await createNotificationsWithSender({
+      recipientIds: admins.map((a) => a._id),
+      senderId: userId,
+      organization,
+      title: "Bulk Leads Deleted",
+      message: `${senderName} deleted ${result.deletedCount} lead(s): ${leadNames}.`,
+      type: "lead_deleted",
+      actionUrl: "/leads",
+    });
+  }
   logger.info(
     `Bulk deleted ${result.deletedCount} leads by user ${req.user._id}`,
   );
@@ -2009,6 +2031,37 @@ export const bulkAssignLeads = asyncHandler(async (req, res) => {
     organization,
   }));
   await Activity.insertMany(activities);
+    const senderName = req.user.name || req.user.email || "Someone";
+const assignedLeads = await Lead.find({
+  _id: { $in: ids }, organization
+}).select("name");
+
+const leadNames = assignedLeads.map((l) => l.name).join(", ");
+    const recipientIds = new Set();
+
+  if (assignedTo.toString() !== userId.toString()) {
+    recipientIds.add(assignedTo.toString());
+  }
+
+  const admins = await User.find({
+    organization,
+    role: "admin",
+    _id: { $ne: userId },
+  }).select("_id");
+
+  admins.forEach((a) => recipientIds.add(a._id.toString()));
+
+  if (recipientIds.size) {
+    await createNotificationsWithSender({
+      recipientIds: [...recipientIds],
+      senderId: userId,
+      organization,
+      title: "Leads Bulk Assigned",
+      message: `${senderName} assigned ${leadNames} to ${assignee.name}.`,
+      type: "lead_assigned",
+      actionUrl: "/leads",
+    });
+  }
 
   logger.info(
     `Bulk assigned ${ids.length} leads to ${assignedTo} by user ${userId}`,
@@ -2062,7 +2115,36 @@ export const bulkUpdateStatus = asyncHandler(async (req, res) => {
     organization,
   }));
   await Activity.insertMany(activities);
+  const affectedLeads = await Lead.find({
+    _id: { $in: ids }, organization
+  }).select("assignedTo name");
+  const senderName = req.user.name || req.user.email || "Someone";
+  const leadNames = affectedLeads.map((l) => l.name).join(", ");
+  const recipientIds = new Set();
 
+  affectedLeads.forEach((lead) => {
+    if (lead.assignedTo && lead.assignedTo.toString() !== userId.toString()) {
+      recipientIds.add(lead.assignedTo.toString());
+    }
+  });
+
+  const admins = await User.find({
+    organization, role: "admin", _id: { $ne: userId }
+  }).select("_id");
+
+  admins.forEach((a) => recipientIds.add(a._id.toString()));
+
+  if (recipientIds.size) {
+    await createNotificationsWithSender({
+      recipientIds: [...recipientIds],
+      senderId: userId,
+      organization,
+      title: "Leads Status Updated",
+     message: `${senderName} changed status to "${status}" for: ${leadNames}.`,
+      type: "lead_status_changed",
+      actionUrl: "/leads",
+    });
+  }
   logger.info(
     `Bulk status updated to "${status}" for ${ids.length} leads by user ${userId}`,
   );
@@ -2119,7 +2201,36 @@ export const bulkUpdatePriority = asyncHandler(async (req, res) => {
     organization,
   }));
   await Activity.insertMany(activities);
+    // ── NOTIFICATIONS ────────────────────────────────────────────
+  const affectedLeads = await Lead.find({
+    _id: { $in: ids }, organization
+  }).select("assignedTo name");
+  const leadNames = affectedLeads.map((l) => l.name).join(", ");
+  const recipientIds = new Set();
+   const senderName = req.user.name || req.user.email || "Someone";
+  affectedLeads.forEach((lead) => {
+    if (lead.assignedTo && lead.assignedTo.toString() !== userId.toString()) {
+      recipientIds.add(lead.assignedTo.toString());
+    }
+  });
 
+  const admins = await User.find({
+    organization, role: "admin", _id: { $ne: userId }
+  }).select("_id");
+
+  admins.forEach((a) => recipientIds.add(a._id.toString()));
+
+  if (recipientIds.size) {
+    await createNotificationsWithSender({
+      recipientIds: [...recipientIds],
+      senderId: userId,
+      organization,
+      title: "Leads Priority Updated",
+      message: `${senderName} changed priority to "${priority}" for: ${leadNames}.`,
+      type: "lead_updated",
+      actionUrl: "/leads",
+    });
+  }
   logger.info(
     `Bulk priority updated to "${priority}" for ${ids.length} leads by user ${userId}`,
   );
