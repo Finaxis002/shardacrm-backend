@@ -572,13 +572,21 @@ export const getSyncStatus = asyncHandler(async (req, res) => {
  */
 export const syncNewRows = async (sync) => {
   const freshSync = await GoogleSheetSync.findById(sync._id)
-    .select("isSyncing lastRowSynced sheetName fieldMappings fixedValues")
+    .select("isSyncing lastRowSynced sheetName fieldMappings fixedValues updatedAt")
     .lean();
-    
+
   if (freshSync?.isSyncing) {
-    logger.info(`Sync ${sync._id} already running, skipping`);
-    return;
+    const lockAgeMs = Date.now() - new Date(freshSync.updatedAt).getTime();
+    const STALE_LOCK_MS = 2 * 60 * 1000; // 2 minutes
+
+    if (lockAgeMs < STALE_LOCK_MS) {
+      logger.info(`Sync ${sync._id} already running, skipping`);
+      return;
+    }
+
+    logger.warn(`Sync ${sync._id} had a stale lock (${Math.round(lockAgeMs / 1000)}s old) — auto-resetting`);
   }
+
   await GoogleSheetSync.findByIdAndUpdate(sync._id, { isSyncing: true });
 
   try {
