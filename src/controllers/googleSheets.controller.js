@@ -571,20 +571,22 @@ export const getSyncStatus = asyncHandler(async (req, res) => {
  * Syncs new rows for a single GoogleSheetSync document
  */
 export const syncNewRows = async (sync) => {
-
-  // ✅ Race condition fix
-  const freshSync = await GoogleSheetSync.findById(sync._id).select("isSyncing").lean();
+  const freshSync = await GoogleSheetSync.findById(sync._id)
+    .select("isSyncing lastRowSynced sheetName fieldMappings fixedValues")
+    .lean();
+    
   if (freshSync?.isSyncing) {
     logger.info(`Sync ${sync._id} already running, skipping`);
     return;
   }
   await GoogleSheetSync.findByIdAndUpdate(sync._id, { isSyncing: true });
 
-try {
-    const fromRow = sync.lastRowSynced + 1;
+  try {
+    const fromRow = freshSync.lastRowSynced + 1;  // ← DB se fresh value
+    const sheetName = freshSync.sheetName || sync.sheetName || "";
 
-      const syncDetails = await GoogleSheetSync.findById(sync._id).lean();
-    const sheetName = syncDetails?.sheetName || sync.sheetName || "";
+    //   const syncDetails = await GoogleSheetSync.findById(sync._id).lean();
+    // const sheetName = syncDetails?.sheetName || sync.sheetName || "";
     
     // DEBUG - baad mein hatana hai
     logger.info(
@@ -607,8 +609,8 @@ try {
 
     const { imported, skipped } = await saveLeadsFromRows({
   rows,
-  fieldMappings: sync.fieldMappings,  
-  fixedValues: sync.fixedValues,      
+  fieldMappings: freshSync.fieldMappings || sync.fieldMappings,
+  fixedValues: freshSync.fixedValues || sync.fixedValues,    
   organization: sync.organization,
   createdBy: sync.createdBy,
   assignedTo: sync.createdBy,
@@ -616,12 +618,14 @@ try {
   sheetName,
 });
 
-  sync.lastRowSynced += rows.length;
-    sync.lastSyncedAt = new Date();
-    sync.totalImported += imported;
-    sync.lastError = null;
-    await sync.save();
-    await GoogleSheetSync.findByIdAndUpdate(sync._id, { isSyncing: false }); // ✅
+  await GoogleSheetSync.findByIdAndUpdate(sync._id, {
+  lastRowSynced: freshSync.lastRowSynced + rows.length,
+  lastSyncedAt: new Date(),
+  $inc: { totalImported: imported },
+  lastError: null,
+  isSyncing: false,
+});
+    // await GoogleSheetSync.findByIdAndUpdate(sync._id, { isSyncing: false }); // ✅
 
     if (imported > 0) {
       logger.info(
@@ -629,9 +633,10 @@ try {
       );
     }
   } catch (err) {
-    sync.lastError = err.message;
-    await sync.save();
-    await GoogleSheetSync.findByIdAndUpdate(sync._id, { isSyncing: false }); // ✅
+  await GoogleSheetSync.findByIdAndUpdate(sync._id, {
+    lastError: err.message,
+    isSyncing: false,
+  });
     logger.error(`Auto-sync error for ${sync._id}: ${err.message}`);
   }
 };
