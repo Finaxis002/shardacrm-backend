@@ -27,6 +27,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import crossSellRouter from "./routes/Crosssell.routes.js";
 import whatsappRouter from "./routes/whatsapp.routes.js";
+import callLogRoutes from "./routes/callLog.routes.js";
 import startEmailScheduler from "./utils/emailScheduler.js";
 import { startReactivationCron } from "./cron/reactivationCron.js";
 const __filename = fileURLToPath(import.meta.url);
@@ -102,7 +103,18 @@ app.use(
   },
   express.static(path.join(process.cwd(), "src", "uploads", "recordings")),
 );
-// New Live Test Route
+
+// ── Call Log routes + recording file serving ──
+app.use("/api/v1/call-logs", callLogRoutes);
+app.use(
+  "/uploads/call-recordings",
+  (req, res, next) => {
+    res.header("Cross-Origin-Resource-Policy", "cross-origin");
+    next();
+  },
+  express.static(path.join(process.cwd(), "src", "uploads", "call-recordings")),
+);
+// New Live Test Route  
 app.get("/api/v1/test-live", (req, res) => {
   res.status(200).json({
     success: true,
