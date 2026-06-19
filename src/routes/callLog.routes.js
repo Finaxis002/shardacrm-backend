@@ -2,12 +2,13 @@ import express from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { protect } from "../middleware/auth.middleware.js"; // ⚠️ confirm path/name
+import { protect } from "../middleware/auth.middleware.js";
 import {
   syncCallLogs,
   getCallLogsForLead,
   getAllCallLogs,
   uploadRecording,
+  uploadCallLogWithRecording,
 } from "../controllers/callLog.controller.js";
 
 const router = express.Router();
@@ -19,14 +20,25 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname) || ".m4a";
-    cb(null, `${req.params.id}-${Date.now()}${ext}`);
+    cb(null, `${req.params.id || "call"}-${Date.now()}${ext}`);
   },
 });
 const upload = multer({ storage, limits: { fileSize: 25 * 1024 * 1024 } });
 
 router.post("/", protect, syncCallLogs);
+router.post(
+  "/sync-with-recording",
+  protect,
+  upload.single("recording"),
+  uploadCallLogWithRecording,
+);
 router.get("/", protect, getCallLogsForLead);
 router.get("/all", protect, getAllCallLogs);
-router.post("/:id/recording", protect, upload.single("recording"), uploadRecording);
+router.post(
+  "/:id/recording",
+  protect,
+  upload.single("recording"),
+  uploadRecording,
+);
 
 export default router;

@@ -58,6 +58,59 @@ export const syncCallLogs = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, { synced: syncedCount }, "Call logs synced"));
 });
 
+export const uploadCallLogWithRecording = asyncHandler(async (req, res) => {
+  const { phoneNumber, callType, duration, callTimestamp, deviceCallId } =
+    req.body;
+
+  if (!req.file) {
+    throw new ApiError(400, "No file uploaded");
+  }
+
+  if (!phoneNumber || !callType || !callTimestamp) {
+    throw new ApiError(
+      400,
+      "phoneNumber, callType, and callTimestamp are required",
+    );
+  }
+
+  const organization = req.user.organization;
+  const userId = req.user._id;
+
+  const cleanNumber = String(phoneNumber).replace(/\D/g, "").slice(-10);
+  const lead = await Lead.findOne({
+    organization,
+    $or: [
+      { phone: { $regex: cleanNumber + "$" } },
+      { alternatePhone: { $regex: cleanNumber + "$" } },
+    ],
+  }).select("_id");
+
+  const relativeUrl = `/uploads/call-recordings/${req.file.filename}`;
+
+  const callLog = await CallLog.findOneAndUpdate(
+    { user: userId, deviceCallId: deviceCallId || undefined },
+    {
+      organization,
+      lead: lead?._id || null,
+      user: userId,
+      phoneNumber,
+      callType,
+      duration: Number(duration) || 0,
+      callTimestamp: new Date(Number(callTimestamp)),
+      deviceCallId: deviceCallId || undefined,
+      recordingUrl: relativeUrl,
+      recordingUploaded: true,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
+
+  logger.info(`Call log uploaded with recording for user ${userId}`);
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, callLog, "Call log with recording uploaded"));
+});
+
 export const getCallLogsForLead = asyncHandler(async (req, res) => {
   const { leadId } = req.query;
   if (!leadId) {
