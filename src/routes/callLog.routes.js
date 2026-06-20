@@ -20,10 +20,12 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname) || ".m4a";
-    cb(null, `${req.params.id || "call"}-${Date.now()}${ext}`);
+    const rawNumber = String(req.body?.phoneNumber || "call");
+    const cleanNumber = rawNumber.replace(/\D/g, "").slice(-10) || "call";
+    cb(null, `${cleanNumber}-${Date.now()}${ext}`);
   },
 });
-const upload = multer({ storage, limits: { fileSize: 25 * 1024 * 1024 } });
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 
 router.post("/", protect, syncCallLogs);
 router.post(
