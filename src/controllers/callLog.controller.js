@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import CallLog from "../models/CallLog.model.js";
 import Lead from "../models/Lead.model.js";
 import ApiError from "../utils/apiError.js";
@@ -31,20 +33,34 @@ export const syncCallLogs = asyncHandler(async (req, res) => {
     }).select("_id");
 
     try {
-      await CallLog.findOneAndUpdate(
-        { user: userId, deviceCallId: deviceCallId || undefined },
-        {
-          organization,
-          lead: lead?._id || null,
-          user: userId,
-          phoneNumber,
-          callType,
-          duration: duration || 0,
-          callTimestamp: new Date(callTimestamp),
-          deviceCallId: deviceCallId || undefined,
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
-      );
+      const query = deviceCallId ? { user: userId, deviceCallId } : null;
+      const parsedCallTimestamp = isNaN(Number(callTimestamp))
+        ? new Date(callTimestamp)
+        : new Date(Number(callTimestamp));
+      const callData = {
+        organization,
+        lead: lead?._id || null,
+        user: userId,
+        phoneNumber,
+        callType,
+        duration: duration || 0,
+        callTimestamp: parsedCallTimestamp,
+        ...(deviceCallId && { deviceCallId }),
+      };
+
+      if (query) {
+        await CallLog.findOneAndUpdate(
+          query,
+          { $set: callData },
+          {
+            upsert: true,
+            new: true,
+            setDefaultsOnInsert: true,
+          },
+        );
+      } else {
+        await CallLog.create(callData);
+      }
       syncedCount++;
     } catch (err) {
       continue;
@@ -86,23 +102,53 @@ export const uploadCallLogWithRecording = asyncHandler(async (req, res) => {
   }).select("_id");
 
   const relativeUrl = `/uploads/call-recordings/${req.file.filename}`;
+  const parsedCallTimestamp = isNaN(Number(callTimestamp))
+    ? new Date(callTimestamp)
+    : new Date(Number(callTimestamp));
+  const callData = {
+    organization,
+    lead: lead?._id || null,
+    user: userId,
+    phoneNumber,
+    callType,
+    duration: Number(duration) || 0,
+    callTimestamp: parsedCallTimestamp,
+    recordingUrl: relativeUrl,
+    recordingUploaded: true,
+    ...(deviceCallId && { deviceCallId }),
+  };
 
-  const callLog = await CallLog.findOneAndUpdate(
-    { user: userId, deviceCallId: deviceCallId || undefined },
-    {
-      organization,
-      lead: lead?._id || null,
-      user: userId,
-      phoneNumber,
-      callType,
-      duration: Number(duration) || 0,
-      callTimestamp: new Date(Number(callTimestamp)),
-      deviceCallId: deviceCallId || undefined,
-      recordingUrl: relativeUrl,
-      recordingUploaded: true,
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
-  );
+  const query = deviceCallId ? { user: userId, deviceCallId } : null;
+  let callLog;
+  if (query) {
+    callLog = await CallLog.findOneAndUpdate(
+      query,
+      { $set: callData },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      },
+    );
+  } else {
+    callLog = await CallLog.create(callData);
+  }
+
+  try {
+    const rawNumber = String(phoneNumber || "call");
+    const safeNumber = rawNumber.replace(/\D/g, "").slice(-10) || "call";
+    const ext = path.extname(req.file.filename) || ".m4a";
+    const newFilename = `${safeNumber}-${callLog._id || Date.now()}${ext}`;
+    const newFilePath = path.join(path.dirname(req.file.path), newFilename);
+
+    if (req.file.path !== newFilePath) {
+      fs.renameSync(req.file.path, newFilePath);
+      callLog.recordingUrl = `/uploads/call-recordings/${newFilename}`;
+      await callLog.save();
+    }
+  } catch (err) {
+    logger.warn("Call recording file rename failed", err);
+  }
 
   logger.info(`Call log uploaded with recording for user ${userId}`);
 
