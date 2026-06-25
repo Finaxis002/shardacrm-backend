@@ -1,7 +1,10 @@
+import fs from "fs";
+import path from "path";
 import mongoose from "mongoose";
 import Lead from "../models/Lead.model.js";
 import User from "../models/User.model.js";
 import Activity from "../models/Activity.model.js";
+import CallLog from "../models/CallLog.model.js";
 import Payment from "../models/Payment.model.js";
 import Reminder from "../models/Reminder.model.js";
 import ApiError from "../utils/apiError.js";
@@ -115,12 +118,10 @@ export const getLeads = asyncHandler(async (req, res) => {
     const dateFilter = {};
 
     if (dateFrom) {
-      
       const fromDate = new Date(dateFrom + "T00:00:00+05:30");
       dateFilter.$gte = fromDate;
     }
     if (dateTo) {
-      
       const endDate = new Date(dateTo + "T23:59:59+05:30");
       dateFilter.$lte = endDate;
     }
@@ -249,7 +250,6 @@ export const getLeads = asyncHandler(async (req, res) => {
               ? [{ $sort: { createdAt: -1 } }]
               : sortBy === "active"
                 ? [
-                    
                     {
                       $lookup: {
                         from: "activities",
@@ -264,10 +264,10 @@ export const getLeads = asyncHandler(async (req, res) => {
                         _activityCount: { $size: "$_allActivities" },
                       },
                     },
-                    
+
                     {
                       $match: {
-                        _activityCount: { $gt: 1 }, 
+                        _activityCount: { $gt: 1 },
                       },
                     },
                     { $sort: { _lastContactedAt: -1 } },
@@ -404,6 +404,37 @@ export const getLeads = asyncHandler(async (req, res) => {
  * @route GET /api/v1/leads/:id
  * @access Private
  */
+const formatCallLogForLeadActivity = (callLog) => {
+  const durationSeconds = Number(callLog?.duration || 0);
+  const durationLabel =
+    durationSeconds > 0
+      ? `${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s`
+      : "0s";
+
+  return {
+    _id: callLog._id,
+    leadId: callLog.lead,
+    type: "Call",
+    text: callLog.phoneNumber
+      ? `Call with ${callLog.phoneNumber}`
+      : "Auto-tracked call",
+    createdBy: callLog.user || null,
+    organization: callLog.organization,
+    callDuration: durationLabel,
+    callDirection: callLog.callType || "Outgoing",
+    callOutcome: callLog.recordingUploaded ? "Recorded" : "Unknown",
+    recordingUrl: callLog.recordingUrl || null,
+    recordingUploaded: Boolean(callLog.recordingUploaded),
+    phoneNumber: callLog.phoneNumber,
+    duration: durationSeconds,
+    callType: callLog.callType,
+    callTimestamp: callLog.callTimestamp,
+    createdAt: callLog.callTimestamp || callLog.createdAt,
+    updatedAt: callLog.updatedAt || callLog.callTimestamp || callLog.createdAt,
+    isAutoTracked: true,
+  };
+};
+
 export const getLead = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const organization = req.user.organization;
@@ -430,9 +461,32 @@ export const getLead = asyncHandler(async (req, res) => {
     }
   }
 
-  const activities = await Activity.find({ leadId: lead._id })
+  const manualActivities = await Activity.find({
+    leadId: lead._id,
+    organization,
+  })
     .sort({ createdAt: -1 })
     .lean();
+
+  const callLogs = await CallLog.find({
+    organization,
+    lead: lead._id,
+  })
+    .sort({ callTimestamp: -1 })
+    .lean();
+
+  const activities = [
+    ...manualActivities,
+    ...callLogs.map(formatCallLogForLeadActivity),
+  ].sort((a, b) => {
+    const dateA = new Date(
+      b.updatedAt || b.createdAt || b.callTimestamp || 0,
+    ).getTime();
+    const dateB = new Date(
+      a.updatedAt || a.createdAt || a.callTimestamp || 0,
+    ).getTime();
+    return dateA - dateB;
+  });
 
   const payments = await Payment.find({ leadId: lead._id })
     .sort({ paymentDate: -1, createdAt: -1 })
@@ -1649,9 +1703,29 @@ export const deleteLead = asyncHandler(async (req, res) => {
     await deleteTaskGcalEvent(task);
   }
 
-  await Reminder.deleteMany({ leadId: id });
-  await Lead.findByIdAndDelete(id);
-  await Activity.deleteMany({ leadId: id });
+  const callLogs = await CallLog.find({ lead: id, organization }).lean();
+  for (const callLog of callLogs) {
+    if (callLog.recordingUrl) {
+      try {
+        const relativePath = callLog.recordingUrl.replace(/^\/+/, "");
+        const absolutePath = path.join(process.cwd(), "src", relativePath);
+        if (fs.existsSync(absolutePath)) {
+          fs.unlinkSync(absolutePath);
+        }
+      } catch (error) {
+        logger.warn(
+          `Failed to delete call recording file ${callLog.recordingUrl}: ${error.message}`,
+        );
+      }
+    }
+  }
+
+  await Promise.all([
+    Reminder.deleteMany({ leadId: id }),
+    Lead.findByIdAndDelete(id),
+    Activity.deleteMany({ leadId: id }),
+    CallLog.deleteMany({ lead: id, organization }),
+  ]);
 
   logger.info(
     `Lead and associated data deleted: ${id} by user ${req.user._id}`,
@@ -1909,7 +1983,7 @@ export const getLeadStats = asyncHandler(async (req, res) => {
 export const bulkDeleteLeads = asyncHandler(async (req, res) => {
   const { ids } = req.body;
   const organization = req.user.organization;
-   const userId = req.user._id;
+  const userId = req.user._id;
 
   if (!Array.isArray(ids) || ids.length === 0) {
     throw new ApiError(400, "No lead IDs provided");
@@ -1945,19 +2019,42 @@ export const bulkDeleteLeads = asyncHandler(async (req, res) => {
     await deleteTaskGcalEvent(task);
   }
 
+  const callLogs = await CallLog.find({
+    lead: { $in: ids },
+    organization,
+  }).lean();
+
+  for (const callLog of callLogs) {
+    if (callLog.recordingUrl) {
+      try {
+        const relativePath = callLog.recordingUrl.replace(/^\/+/, "");
+        const absolutePath = path.join(process.cwd(), "src", relativePath);
+        if (fs.existsSync(absolutePath)) {
+          fs.unlinkSync(absolutePath);
+        }
+      } catch (error) {
+        logger.warn(
+          `Failed to delete call recording file ${callLog.recordingUrl}: ${error.message}`,
+        );
+      }
+    }
+  }
+
   await Promise.all([
     Activity.deleteMany({ leadId: { $in: ids }, organization }),
     Reminder.deleteMany({ leadId: { $in: ids }, organization }),
     Payment.deleteMany({ leadId: { $in: ids }, organization }),
+    CallLog.deleteMany({ lead: { $in: ids }, organization }),
   ]);
   const leadsToDelete = await Lead.find({
-  _id: { $in: ids }, organization
-}).select("name");
+    _id: { $in: ids },
+    organization,
+  }).select("name");
 
-const leadNames = leadsToDelete.map((l) => l.name).join(", ");
+  const leadNames = leadsToDelete.map((l) => l.name).join(", ");
   const senderName = req.user.name || req.user.email || "Someone";
   const result = await Lead.deleteMany({ _id: { $in: ids }, organization });
-const admins = await User.find({
+  const admins = await User.find({
     organization,
     role: "admin",
     _id: { $ne: userId },
@@ -2031,13 +2128,14 @@ export const bulkAssignLeads = asyncHandler(async (req, res) => {
     organization,
   }));
   await Activity.insertMany(activities);
-    const senderName = req.user.name || req.user.email || "Someone";
-const assignedLeads = await Lead.find({
-  _id: { $in: ids }, organization
-}).select("name");
+  const senderName = req.user.name || req.user.email || "Someone";
+  const assignedLeads = await Lead.find({
+    _id: { $in: ids },
+    organization,
+  }).select("name");
 
-const leadNames = assignedLeads.map((l) => l.name).join(", ");
-    const recipientIds = new Set();
+  const leadNames = assignedLeads.map((l) => l.name).join(", ");
+  const recipientIds = new Set();
 
   if (assignedTo.toString() !== userId.toString()) {
     recipientIds.add(assignedTo.toString());
@@ -2116,7 +2214,8 @@ export const bulkUpdateStatus = asyncHandler(async (req, res) => {
   }));
   await Activity.insertMany(activities);
   const affectedLeads = await Lead.find({
-    _id: { $in: ids }, organization
+    _id: { $in: ids },
+    organization,
   }).select("assignedTo name");
   const senderName = req.user.name || req.user.email || "Someone";
   const leadNames = affectedLeads.map((l) => l.name).join(", ");
@@ -2129,7 +2228,9 @@ export const bulkUpdateStatus = asyncHandler(async (req, res) => {
   });
 
   const admins = await User.find({
-    organization, role: "admin", _id: { $ne: userId }
+    organization,
+    role: "admin",
+    _id: { $ne: userId },
   }).select("_id");
 
   admins.forEach((a) => recipientIds.add(a._id.toString()));
@@ -2140,7 +2241,7 @@ export const bulkUpdateStatus = asyncHandler(async (req, res) => {
       senderId: userId,
       organization,
       title: "Leads Status Updated",
-     message: `${senderName} changed status to "${status}" for: ${leadNames}.`,
+      message: `${senderName} changed status to "${status}" for: ${leadNames}.`,
       type: "lead_status_changed",
       actionUrl: "/leads",
     });
@@ -2201,13 +2302,14 @@ export const bulkUpdatePriority = asyncHandler(async (req, res) => {
     organization,
   }));
   await Activity.insertMany(activities);
-    // ── NOTIFICATIONS ────────────────────────────────────────────
+  // ── NOTIFICATIONS ────────────────────────────────────────────
   const affectedLeads = await Lead.find({
-    _id: { $in: ids }, organization
+    _id: { $in: ids },
+    organization,
   }).select("assignedTo name");
   const leadNames = affectedLeads.map((l) => l.name).join(", ");
   const recipientIds = new Set();
-   const senderName = req.user.name || req.user.email || "Someone";
+  const senderName = req.user.name || req.user.email || "Someone";
   affectedLeads.forEach((lead) => {
     if (lead.assignedTo && lead.assignedTo.toString() !== userId.toString()) {
       recipientIds.add(lead.assignedTo.toString());
@@ -2215,7 +2317,9 @@ export const bulkUpdatePriority = asyncHandler(async (req, res) => {
   });
 
   const admins = await User.find({
-    organization, role: "admin", _id: { $ne: userId }
+    organization,
+    role: "admin",
+    _id: { $ne: userId },
   }).select("_id");
 
   admins.forEach((a) => recipientIds.add(a._id.toString()));

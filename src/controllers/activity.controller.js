@@ -1,5 +1,8 @@
+import fs from "fs";
+import path from "path";
 import { google } from "googleapis";
 import Activity from "../models/Activity.model.js";
+import CallLog from "../models/CallLog.model.js";
 import Lead from "../models/Lead.model.js";
 import Settings from "../models/Settings.model.js";
 import User from "../models/User.model.js";
@@ -56,6 +59,37 @@ const getUserGcalClient = async (userId) => {
   });
 
   return client;
+};
+
+const formatCallLogForActivity = (callLog) => {
+  const durationSeconds = Number(callLog?.duration || 0);
+  const durationLabel =
+    durationSeconds > 0
+      ? `${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s`
+      : "0s";
+
+  return {
+    _id: callLog._id,
+    leadId: callLog.lead,
+    type: "Call",
+    text: callLog.phoneNumber
+      ? `Call with ${callLog.phoneNumber}`
+      : "Auto-tracked call",
+    createdBy: callLog.user || null,
+    organization: callLog.organization,
+    callDuration: durationLabel,
+    callDirection: callLog.callType || "Outgoing",
+    callOutcome: callLog.recordingUploaded ? "Recorded" : "Unknown",
+    recordingUrl: callLog.recordingUrl || null,
+    recordingUploaded: Boolean(callLog.recordingUploaded),
+    phoneNumber: callLog.phoneNumber,
+    duration: durationSeconds,
+    callType: callLog.callType,
+    callTimestamp: callLog.callTimestamp,
+    createdAt: callLog.callTimestamp || callLog.createdAt,
+    updatedAt: callLog.updatedAt || callLog.callTimestamp || callLog.createdAt,
+    isAutoTracked: true,
+  };
 };
 
 const buildTaskGcalResource = async (activity, lead) => {
@@ -312,22 +346,54 @@ export const getActivities = asyncHandler(async (req, res) => {
     if (status === "completed") filter.taskCompleted = true;
   }
 
-  if (limit === undefined || String(limit).trim() === "") {
-    const activities = await Activity.find(filter)
-      .populate("createdBy", "name email")
-      .populate("taskAssignedTo", "name email")
-      .populate("leadId", "name phone")
-      .sort({ createdAt: -1 })
+  const manualActivitiesQuery = Activity.find(filter)
+    .populate("createdBy", "name email")
+    .populate("taskAssignedTo", "name email")
+    .populate("leadId", "name phone")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const manualActivities = await manualActivitiesQuery;
+
+  let combinedActivities = [...manualActivities];
+
+  if ((!type || type === "Call") && leadId) {
+    const callLogs = await CallLog.find({
+      organization,
+      lead: leadId,
+    })
+      .sort({ callTimestamp: -1 })
       .lean();
 
-    const total = activities.length;
+    combinedActivities = [
+      ...manualActivities,
+      ...callLogs.map(formatCallLogForActivity),
+    ];
+  }
 
-    logger.info(`Fetched ${activities.length} activities for user`);
+  combinedActivities.sort((a, b) => {
+    const dateA = new Date(
+      b.updatedAt || b.createdAt || b.callTimestamp || 0,
+    ).getTime();
+    const dateB = new Date(
+      a.updatedAt || a.createdAt || a.callTimestamp || 0,
+    ).getTime();
+    return dateA - dateB;
+  });
+
+  if (limit === undefined || String(limit).trim() === "") {
+    const total = combinedActivities.length;
+
+    logger.info(`Fetched ${combinedActivities.length} activities for user`);
 
     res
       .status(200)
       .json(
-        new ApiResponse(200, activities, "Activities fetched successfully"),
+        new ApiResponse(
+          200,
+          combinedActivities,
+          "Activities fetched successfully",
+        ),
       );
     return;
   }
@@ -338,25 +404,17 @@ export const getActivities = asyncHandler(async (req, res) => {
     page: pageNum,
   } = parsePagination({ page, limit }, 5000);
 
-  const activities = await Activity.find(filter)
-    .skip(skip)
-    .limit(pageLimit)
-    .populate("createdBy", "name email")
-    .populate("taskAssignedTo", "name email")
-    .populate("leadId", "name phone")
-    .sort({ createdAt: -1 })
-    .lean();
+  const total = combinedActivities.length;
+  const paginatedActivities = combinedActivities.slice(skip, skip + pageLimit);
 
-  const total = await Activity.countDocuments(filter);
-
-  logger.info(`Fetched ${activities.length} activities for user`);
+  logger.info(`Fetched ${paginatedActivities.length} activities for user`);
 
   res
     .status(200)
     .json(
       new ApiResponse(
         200,
-        formatPaginatedResponse(activities, total, pageNum, pageLimit),
+        formatPaginatedResponse(paginatedActivities, total, pageNum, pageLimit),
         "Activities fetched successfully",
       ),
     );
@@ -578,7 +636,39 @@ export const deleteActivity = asyncHandler(async (req, res) => {
 
   const activity = await Activity.findOne({ _id: id, organization });
   if (!activity) {
-    throw new ApiError(404, "Activity not found");
+    const callLog = await CallLog.findOne({ _id: id, organization });
+    if (!callLog) {
+      throw new ApiError(404, "Activity not found");
+    }
+
+    const isAdmin = req.user.role === "admin" || req.user.role === "master";
+    const isOwner = callLog.user && String(callLog.user) === String(userId);
+
+    if (!isAdmin && !isOwner) {
+      throw new ApiError(403, "Not authorized to delete this call log");
+    }
+
+    if (callLog.recordingUrl) {
+      try {
+        const relativePath = callLog.recordingUrl.replace(/^\/+/, "");
+        const absolutePath = path.join(process.cwd(), "src", relativePath);
+        if (fs.existsSync(absolutePath)) {
+          fs.unlinkSync(absolutePath);
+        }
+      } catch (error) {
+        logger.warn(
+          `Failed to delete call recording file ${callLog.recordingUrl}: ${error.message}`,
+        );
+      }
+    }
+
+    await CallLog.findByIdAndDelete(id);
+
+    logger.info(`Call log deleted: ${id}`);
+
+    return res
+      .status(200)
+      .json(new ApiResponse(200, null, "Call log deleted successfully"));
   }
 
   const isTaskAssignee =
