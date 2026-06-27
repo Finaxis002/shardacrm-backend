@@ -72,10 +72,12 @@ const formatCallLogForActivity = (callLog) => {
     _id: callLog._id,
     leadId: callLog.lead,
     type: "Call",
+    source: "call_log",
     text: callLog.phoneNumber
       ? `Call with ${callLog.phoneNumber}`
       : "Auto-tracked call",
     createdBy: callLog.user || null,
+    createdByName: callLog.user?.name || null,
     organization: callLog.organization,
     callDuration: durationLabel,
     callDirection: callLog.callType || "Outgoing",
@@ -702,13 +704,10 @@ export const deleteActivity = asyncHandler(async (req, res) => {
  */
 export const getLeadActivities = asyncHandler(async (req, res) => {
   const { leadId } = req.params;
-  const { page, limit } = req.query;
   const organization = req.user.organization;
 
   const lead = await Lead.findOne({ _id: leadId, organization });
-  if (!lead) {
-    throw new ApiError(404, "Lead not found");
-  }
+  if (!lead) throw new ApiError(404, "Lead not found");
 
   const activities = await Activity.find({ leadId, organization })
     .populate("createdBy", "name email")
@@ -716,11 +715,26 @@ export const getLeadActivities = asyncHandler(async (req, res) => {
     .sort({ updatedAt: -1, createdAt: -1 })
     .lean();
 
-  const total = activities.length;
+  const callLogs = await CallLog.find({
+    organization,
+    lead: leadId,
+  })
+    .populate("user", "name email")
+    .sort({ callTimestamp: -1 })
+    .lean();
+
+  const combined = [
+    ...activities,
+    ...callLogs.map(formatCallLogForActivity),
+  ].sort(
+    (a, b) =>
+      new Date(b.updatedAt || b.createdAt || b.callTimestamp) -
+      new Date(a.updatedAt || a.createdAt || a.callTimestamp),
+  );
 
   res
     .status(200)
     .json(
-      new ApiResponse(200, activities, "Lead activities fetched successfully"),
+      new ApiResponse(200, combined, "Lead activities fetched successfully"),
     );
 });
