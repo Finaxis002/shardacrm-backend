@@ -30,6 +30,7 @@ import whatsappRouter from "./routes/whatsapp.routes.js";
 import callLogRoutes from "./routes/callLog.routes.js";
 import startEmailScheduler from "./utils/emailScheduler.js";
 import { startReactivationCron } from "./cron/reactivationCron.js";
+import locationRoutes from './routes/location.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
@@ -67,8 +68,8 @@ app.use(
 );
 
 // Body parser (webhook ke BAAD)
-app.use(express.json({ limit: "16kb" }));
-app.use(express.urlencoded({ limit: "16kb", extended: true }));
+app.use(express.json({ limit: "100mb" }));
+app.use(express.urlencoded({ limit: "100mb", extended: true }));
 
 // Health check
 app.get("/api/v1/health", (req, res) => {
@@ -95,6 +96,8 @@ app.use("/api/v1/integrations", integrationRoutes);
 app.use("/api/v1/auth", logoutOtpRoutes);
 app.use("/api/v1/cross-sell", crossSellRouter);
 app.use("/api/v1/whatsapp", whatsappRouter);
+app.use('/api/v1/location', locationRoutes);
+
 app.use(
   "/uploads/recordings",
   (req, res, next) => {
@@ -110,9 +113,14 @@ app.use(
   "/uploads/call-recordings",
   (req, res, next) => {
     res.header("Cross-Origin-Resource-Policy", "cross-origin");
+    res.header("Access-Control-Allow-Origin", "*");
     next();
   },
-  express.static(path.join(process.cwd(), "src", "uploads", "call-recordings")),
+  express.static(path.join(process.cwd(), "src", "uploads", "call-recordings"), {
+    setHeaders: (res) => {
+      res.header("Cross-Origin-Resource-Policy", "cross-origin"); 
+    }
+  }),
 );
 // New Live Test Route  
 app.get("/api/v1/test-live", (req, res) => {
