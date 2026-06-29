@@ -2155,7 +2155,7 @@ export const bulkAssignLeads = asyncHandler(async (req, res) => {
       senderId: userId,
       organization,
       title: "Leads Bulk Assigned",
-      message: `${senderName} assigned ${leadNames} to ${assignee.name}.`,
+      message: `${senderName} assigned ${ids.length} lead(s) to ${assignee.name}.`,
       type: "lead_assigned",
       actionUrl: "/leads",
     });
