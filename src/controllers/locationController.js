@@ -3,7 +3,11 @@ import AgentLocation from '../models/AgentLocation.js';
 export const updateLocation = async (req, res) => {
   try {
     const { lat, lng } = req.body;
-    await AgentLocation.create({ agent_id: req.user._id, lat, lng });
+    await AgentLocation.findOneAndUpdate(
+      { agent_id: req.user._id },
+      { lat, lng, recorded_at: new Date() },
+      { upsert: true, new: true }
+    );
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
