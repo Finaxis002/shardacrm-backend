@@ -7,6 +7,7 @@ const agentLocationSchema = new mongoose.Schema({
   recorded_at: { type: Date, default: Date.now }
 });
 
-agentLocationSchema.index({ recorded_at: 1 }, { expireAfterSeconds: 604800 });
+agentLocationSchema.index({ recorded_at: 1 });
+agentLocationSchema.index({ agent_id: 1 }, { unique: true });
 
 export default mongoose.model('AgentLocation', agentLocationSchema);  
