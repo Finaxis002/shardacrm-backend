@@ -20,7 +20,7 @@ const callLogSchema = new mongoose.Schema(
     phoneNumber: { type: String, required: true, trim: true },
     callType: {
       type: String,
-      enum: ["Incoming", "Outgoing", "Missed", "Rejected"],
+      enum: ["Incoming", "Outgoing", "Missed", "No Answer", "Rejected"],
       required: true,
     },
     duration: { type: Number, default: 0 },
