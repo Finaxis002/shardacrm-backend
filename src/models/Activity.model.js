@@ -60,6 +60,7 @@ const activitySchema = new mongoose.Schema(
     recordingUrl: String,
     recordingDuration: String,
     recordingSize: String,
+    transcript: String,
     aiAnalysis: {
       intent: String,
       redFlags: [String],

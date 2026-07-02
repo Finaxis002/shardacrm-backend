@@ -7,7 +7,8 @@ import ApiResponse from "../utils/apiResponse.js";
 import ApiError from "../utils/apiError.js";
 import Lead from "../models/Lead.model.js";
 import Activity from "../models/Activity.model.js";
-
+import { analyzeCallRecording } from "../services/aiCallAnalysis.service.js";
+import logger from "../utils/logger.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -31,7 +32,36 @@ export const uploadRecordingMiddleware = multer({
   },
   limits: { fileSize: 100 * 1024 * 1024 },
 }).single("recording");
+// Runs in the background after the upload response has already been sent.
+const runAiAnalysisInBackground = async (activityId, filePath, leadId, organization) => {
+  try {
+    const analysis = await analyzeCallRecording(filePath);
 
+    await Activity.findByIdAndUpdate(activityId, {
+      $set: {
+        text: analysis.summary || "Call recording analyzed",
+        aiAnalysis: {
+          intent: analysis.intent,
+          redFlags: analysis.redFlags,
+          objections: analysis.objections,
+          nextSteps: analysis.nextSteps,
+        },
+        transcript: analysis.transcript,
+      },
+    });
+
+    logger.info(`AI analysis completed for activity ${activityId}`);
+ } catch (err) {
+    console.error("=== AI ANALYSIS ERROR ===", err);
+    logger.error(`AI analysis failed for activity ${activityId}`, {
+      error: err.message,
+    });
+
+    await Activity.findByIdAndUpdate(activityId, {
+      $set: { text: "AI analysis failed — recording is still available above." },
+    });
+  }
+};
 export const uploadRecordingFile = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const organization = req.user.organization;
@@ -64,16 +94,19 @@ export const uploadRecordingFile = asyncHandler(async (req, res) => {
   lead.recording = { label, url: fileUrl };
   await lead.save();
 
-  await Activity.create({
+  const activity = await Activity.create({
     leadId: lead._id,
     type: "Recording",
-    text: label || "Recording uploaded",
+    text: label || "Recording uploaded — analyzing...",
     recordingUrl: fileUrl,
     createdBy: req.user._id,
     organization,
   });
 
   res.status(200).json(new ApiResponse(200, { recording: newRecording }, "Recording uploaded successfully"));
+
+  // Fire-and-forget — response already sent above, this runs after
+  runAiAnalysisInBackground(activity._id, req.file.path, lead._id, organization);
 });
 
 export const deleteRecording = asyncHandler(async (req, res) => {

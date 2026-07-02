@@ -28,6 +28,14 @@ const callLogSchema = new mongoose.Schema(
     recordingUrl: { type: String, default: null },
     recordingUploaded: { type: Boolean, default: false },
     deviceCallId: { type: String, default: null },
+    transcript: { type: String, default: "" },
+    aiAnalysis: {
+      summary: { type: String, default: "" },
+      intent: { type: String, default: "" },
+      redFlags: { type: [String], default: [] },
+      objections: { type: [String], default: [] },
+      nextSteps: { type: [String], default: [] },
+    },
   },
   { timestamps: true },
 );
