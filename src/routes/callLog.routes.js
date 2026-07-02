@@ -9,6 +9,7 @@ import {
   getAllCallLogs,
   uploadRecording,
   uploadCallLogWithRecording,
+  getCallStatsByUser,
 } from "../controllers/callLog.controller.js";
 
 const router = express.Router();
@@ -36,6 +37,7 @@ router.post(
 );
 router.get("/", protect, getCallLogsForLead);
 router.get("/all", protect, getAllCallLogs);
+router.get("/stats", protect, getCallStatsByUser);
 router.post(
   "/:id/recording",
   protect,
