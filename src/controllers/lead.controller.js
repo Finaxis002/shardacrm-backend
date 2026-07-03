@@ -1725,6 +1725,7 @@ export const deleteLead = asyncHandler(async (req, res) => {
     Lead.findByIdAndDelete(id),
     Activity.deleteMany({ leadId: id }),
     CallLog.deleteMany({ lead: id, organization }),
+      CrossSellLead.deleteMany({ leadId: id, organization }),
   ]);
 
   logger.info(
@@ -2045,6 +2046,7 @@ export const bulkDeleteLeads = asyncHandler(async (req, res) => {
     Reminder.deleteMany({ leadId: { $in: ids }, organization }),
     Payment.deleteMany({ leadId: { $in: ids }, organization }),
     CallLog.deleteMany({ lead: { $in: ids }, organization }),
+     CrossSellLead.deleteMany({ leadId: { $in: ids }, organization }),
   ]);
   const leadsToDelete = await Lead.find({
     _id: { $in: ids },
