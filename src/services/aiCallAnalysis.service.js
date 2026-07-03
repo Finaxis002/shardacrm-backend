@@ -4,10 +4,12 @@ import {
   GoogleGenerativeAI,
 } from "@google/generative-ai";
 import { GoogleAIFileManager } from "@google/generative-ai/server";
+import Groq from "groq-sdk";
 import logger from "../utils/logger.js";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const fileManager = new GoogleAIFileManager(process.env.GEMINI_API_KEY);
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // Gemini 2.0 Flash is free-tier friendly and supports audio input directly
 const MODEL_NAME = "gemini-2.5-flash";
@@ -136,8 +138,74 @@ export const analyzeCallRecording = async (filePath) => {
     throw err;
   }
 
-  return {
+return {
     transcript: parsed.transcript || "",
+    summary: parsed.summary || "",
+    intent: parsed.intent || "",
+    redFlags: Array.isArray(parsed.redFlags) ? parsed.redFlags : [],
+    objections: Array.isArray(parsed.objections) ? parsed.objections : [],
+    nextSteps: Array.isArray(parsed.nextSteps) ? parsed.nextSteps : [],
+  };
+};
+
+export const analyzeWithGroqFallback = async (filePath) => {
+  logger.warn(`Groq fallback triggered for: ${filePath}`);
+
+  // Step 1: Whisper se transcript banao
+  const transcription = await groq.audio.transcriptions.create({
+    file: fs.createReadStream(filePath),
+    model: "whisper-large-v3",
+    response_format: "text",
+  });
+
+  const transcript = String(transcription || "").trim();
+
+  if (!transcript) {
+    return {
+      transcript: "",
+      summary: "Audio was silent or inaudible.",
+      intent: "Unknown",
+      redFlags: [],
+      objections: [],
+      nextSteps: [],
+    };
+  }
+
+  // Step 2: LLaMA se analysis karo
+  const completion = await groq.chat.completions.create({
+    model: "llama-3.3-70b-versatile",
+    messages: [
+      {
+        role: "user",
+        content: `You are analyzing a sales call transcript for a CRM system.
+Respond with ONLY a valid JSON object (no markdown, no code fences) in exactly this shape:
+{
+  "summary": "A concise 3-5 sentence summary",
+  "intent": "One short phrase describing customer intent/interest level",
+  "redFlags": ["short phrase"],
+  "objections": ["short phrase"],
+  "nextSteps": ["short actionable phrase"]
+}
+
+Transcript:
+${transcript}`,
+      },
+    ],
+    temperature: 0.3,
+  });
+
+  const responseText = completion.choices[0]?.message?.content || "";
+
+  let parsed;
+  try {
+    parsed = extractJson(responseText);
+  } catch (err) {
+    logger.error("Failed to parse Groq response as JSON", { error: err.message });
+    throw err;
+  }
+
+  return {
+    transcript,
     summary: parsed.summary || "",
     intent: parsed.intent || "",
     redFlags: Array.isArray(parsed.redFlags) ? parsed.redFlags : [],

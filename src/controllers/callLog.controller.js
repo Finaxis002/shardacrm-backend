@@ -6,7 +6,7 @@ import ApiError from "../utils/apiError.js";
 import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import logger from "../utils/logger.js";
-import { analyzeCallRecording } from "../services/aiCallAnalysis.service.js";
+import { analyzeCallRecording, analyzeWithGroqFallback } from "../services/aiCallAnalysis.service.js";
 
 const runCallLogAiAnalysisInBackground = async (callLogId, filePath) => {
   try {
@@ -26,8 +26,31 @@ const runCallLogAiAnalysisInBackground = async (callLogId, filePath) => {
     });
 
     logger.info(`AI analysis completed for call log ${callLogId}`);
- } catch (err) {
-    logger.error(`AI analysis failed for call log ${callLogId} | ${err.message} | file exists: ${require('fs').existsSync(filePath)} | path: ${filePath}`);
+} catch (err) {
+    const isQuotaError = err?.status === 429 || /quota/i.test(err?.message || "");
+    if (isQuotaError && process.env.GROQ_API_KEY) {
+      try {
+        logger.warn(`Gemini quota hit, switching to Groq for callLog ${callLogId}`);
+        const analysis = await analyzeWithGroqFallback(filePath);
+        await CallLog.findByIdAndUpdate(callLogId, {
+          $set: {
+            transcript: analysis.transcript,
+            aiAnalysis: {
+              summary: analysis.summary,
+              intent: analysis.intent,
+              redFlags: analysis.redFlags,
+              objections: analysis.objections,
+              nextSteps: analysis.nextSteps,
+            },
+          },
+        });
+        logger.info(`Groq fallback completed for call log ${callLogId}`);
+        return;
+      } catch (groqErr) {
+        logger.error(`Groq fallback failed for call log ${callLogId}`, { error: groqErr.message });
+      }
+    }
+    logger.error(`AI analysis failed for call log ${callLogId}`, { error: err.message });
   }
 };
 
