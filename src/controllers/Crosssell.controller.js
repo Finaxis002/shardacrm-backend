@@ -670,11 +670,18 @@ const matchStage = {
 };
 
 if (userId) {
-  matchStage.assignedTo = new mongoose.Types.ObjectId(userId);
-} else if (
-  !["admin", "tl", "manager"].includes(req.user.role)
-) {
-  matchStage.assignedTo = new mongoose.Types.ObjectId(req.user._id);
+  const targetId = new mongoose.Types.ObjectId(userId);
+  const leadIds = await Lead.find({
+    organization,
+    $or: [{ assignedTo: targetId }, { coAssignees: targetId }],
+  }).distinct("_id");
+  matchStage.leadId = { $in: leadIds };
+} else if (!["admin", "tl", "manager"].includes(req.user.role)) {
+  const leadIds = await Lead.find({
+    organization,
+    $or: [{ assignedTo: req.user._id }, { coAssignees: req.user._id }],
+  }).distinct("_id");
+  matchStage.leadId = { $in: leadIds };
 }
   if (dateFrom || dateTo) matchStage.createdAt = dateFilter;
 
@@ -962,13 +969,22 @@ const matchStage = {
   organization: new mongoose.Types.ObjectId(organization),
 };
 
-if (userId) {
-  matchStage.assignedTo = new mongoose.Types.ObjectId(userId);
-} else if (
-  !["admin", "tl", "manager"].includes(req.user.role)
-) {
-  matchStage.assignedTo = new mongoose.Types.ObjectId(req.user._id);
-}
+ if (userId) {
+    // Admin/TL/Manager selected a specific user from dropdown
+    const targetId = new mongoose.Types.ObjectId(userId);
+    const leadIds = await Lead.find({
+      organization,
+      $or: [{ assignedTo: targetId }, { coAssignees: targetId }],
+    }).distinct("_id");
+    matchStage.leadId = { $in: leadIds };
+  } else if (!["admin", "tl", "manager"].includes(req.user.role)) {
+    // Regular user — only their own assigned + co-assigned leads
+    const leadIds = await Lead.find({
+      organization,
+      $or: [{ assignedTo: req.user._id }, { coAssignees: req.user._id }],
+    }).distinct("_id");
+    matchStage.leadId = { $in: leadIds };
+  }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const total = await CrossSellLead.countDocuments(matchStage);
@@ -1064,3 +1080,4 @@ const dateObj = new Date(reactivationDate);
 
   res.status(200).json(new ApiResponse(200, { record }, "Reactivation scheduled"));
 }); 
+
