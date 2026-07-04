@@ -4,6 +4,7 @@ import connectDB from "./src/config/db.js";
 import { config } from "./src/config/env.js";
 import logger from "./src/utils/logger.js";
 import { startSheetPoller } from "./jobs/sheetPoller.job.js"; // 👈 ADD
+import { startRecordingCleanupCron } from "./jobs/deleteOldRecordings.job.js";
 
 const server = http.createServer(app);
 
@@ -12,6 +13,7 @@ const PORT = config.port;
 // Connect to database, phir poller start karo
 connectDB().then(() => {                    // 👈 CHANGE
   startSheetPoller();                       // 👈 ADD
+   startRecordingCleanupCron();  
 });
 
 server.listen(PORT, () => {

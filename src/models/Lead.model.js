@@ -57,6 +57,14 @@ const leadSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+     closedAt: {
+      type: Date,
+      default: null,
+    },
+    recordingsDeletedAt: {
+      type: Date,
+      default: null,
+    },
     initialNote: {
       type: String,
       default: "",
