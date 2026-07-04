@@ -63,6 +63,7 @@ const getUserGcalClient = async (userId) => {
 
 const formatCallLogForActivity = (callLog) => {
   const durationSeconds = Number(callLog?.duration || 0);
+  const ringSeconds = Number(callLog?.ringDuration || 0);
   const durationLabel =
     durationSeconds > 0
       ? `${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s`
@@ -86,6 +87,7 @@ const formatCallLogForActivity = (callLog) => {
     recordingUploaded: Boolean(callLog.recordingUploaded),
     phoneNumber: callLog.phoneNumber,
     duration: durationSeconds,
+    ringDuration: ringSeconds,
     callType: callLog.callType,
     callTimestamp: callLog.callTimestamp,
     createdAt: callLog.callTimestamp || callLog.createdAt,

@@ -24,6 +24,7 @@ const callLogSchema = new mongoose.Schema(
       required: true,
     },
     duration: { type: Number, default: 0 },
+    ringDuration: { type: Number, default: 0 },
     callTimestamp: { type: Date, required: true },
     recordingUrl: { type: String, default: null },
     recordingUploaded: { type: Boolean, default: false },
