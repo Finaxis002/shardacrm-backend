@@ -6,7 +6,10 @@ import ApiError from "../utils/apiError.js";
 import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import logger from "../utils/logger.js";
-import { analyzeCallRecording, analyzeWithGroqFallback } from "../services/aiCallAnalysis.service.js";
+import {
+  analyzeCallRecording,
+  analyzeWithGroqFallback,
+} from "../services/aiCallAnalysis.service.js";
 
 const runCallLogAiAnalysisInBackground = async (callLogId, filePath) => {
   try {
@@ -26,11 +29,14 @@ const runCallLogAiAnalysisInBackground = async (callLogId, filePath) => {
     });
 
     logger.info(`AI analysis completed for call log ${callLogId}`);
-} catch (err) {
-    const isQuotaError = err?.status === 429 || /quota/i.test(err?.message || "");
+  } catch (err) {
+    const isQuotaError =
+      err?.status === 429 || /quota/i.test(err?.message || "");
     if (isQuotaError && process.env.GROQ_API_KEY) {
       try {
-        logger.warn(`Gemini quota hit, switching to Groq for callLog ${callLogId}`);
+        logger.warn(
+          `Gemini quota hit, switching to Groq for callLog ${callLogId}`,
+        );
         const analysis = await analyzeWithGroqFallback(filePath);
         await CallLog.findByIdAndUpdate(callLogId, {
           $set: {
@@ -47,10 +53,14 @@ const runCallLogAiAnalysisInBackground = async (callLogId, filePath) => {
         logger.info(`Groq fallback completed for call log ${callLogId}`);
         return;
       } catch (groqErr) {
-        logger.error(`Groq fallback failed for call log ${callLogId}`, { error: groqErr.message });
+        logger.error(`Groq fallback failed for call log ${callLogId}`, {
+          error: groqErr.message,
+        });
       }
     }
-    logger.error(`AI analysis failed for call log ${callLogId}`, { error: err.message });
+    logger.error(`AI analysis failed for call log ${callLogId}`, {
+      error: err.message,
+    });
   }
 };
 
@@ -66,8 +76,14 @@ export const syncCallLogs = asyncHandler(async (req, res) => {
   let syncedCount = 0;
 
   for (const entry of logs) {
-    const { phoneNumber, callType, duration, callTimestamp, deviceCallId } =
-      entry;
+    const {
+      phoneNumber,
+      callType,
+      duration,
+      ringDuration,
+      callTimestamp,
+      deviceCallId,
+    } = entry;
     if (!phoneNumber || !callType || !callTimestamp) continue;
 
     const cleanNumber = phoneNumber.replace(/\D/g, "").slice(-10);
@@ -91,6 +107,7 @@ export const syncCallLogs = asyncHandler(async (req, res) => {
         phoneNumber,
         callType,
         duration: duration || 0,
+        ringDuration: ringDuration || 0,
         callTimestamp: parsedCallTimestamp,
         ...(deviceCallId && { deviceCallId }),
       };
@@ -122,8 +139,14 @@ export const syncCallLogs = asyncHandler(async (req, res) => {
 });
 
 export const uploadCallLogWithRecording = asyncHandler(async (req, res) => {
-  const { phoneNumber, callType, duration, callTimestamp, deviceCallId } =
-    req.body;
+  const {
+    phoneNumber,
+    callType,
+    duration,
+    ringDuration,
+    callTimestamp,
+    deviceCallId,
+  } = req.body;
 
   if (!req.file) {
     throw new ApiError(400, "No file uploaded");
@@ -159,6 +182,7 @@ export const uploadCallLogWithRecording = asyncHandler(async (req, res) => {
     phoneNumber,
     callType,
     duration: Number(duration) || 0,
+    ringDuration: Number(ringDuration) || 0,
     callTimestamp: parsedCallTimestamp,
     recordingUrl: relativeUrl,
     recordingUploaded: true,
@@ -203,8 +227,8 @@ export const uploadCallLogWithRecording = asyncHandler(async (req, res) => {
     .status(200)
     .json(new ApiResponse(200, callLog, "Call log with recording uploaded"));
 
-// Fire-and-forget — response already sent above, this runs after
-  const recordingFilename = callLog.recordingUrl.split('/').pop();
+  // Fire-and-forget — response already sent above, this runs after
+  const recordingFilename = callLog.recordingUrl.split("/").pop();
   const finalPath = path.join(path.dirname(req.file.path), recordingFilename);
   logger.info(`AI queued | callLog: ${callLog._id} | path: ${finalPath}`);
   runCallLogAiAnalysisInBackground(callLog._id, finalPath);
@@ -282,8 +306,12 @@ export const getAllCallLogs = asyncHandler(async (req, res) => {
       // number → lead lookup map banao
       const leadByNumber = {};
       matchedLeads.forEach((ld) => {
-        const p1 = String(ld.phone || "").replace(/\D/g, "").slice(-10);
-        const p2 = String(ld.alternatePhone || "").replace(/\D/g, "").slice(-10);
+        const p1 = String(ld.phone || "")
+          .replace(/\D/g, "")
+          .slice(-10);
+        const p2 = String(ld.alternatePhone || "")
+          .replace(/\D/g, "")
+          .slice(-10);
         if (p1) leadByNumber[p1] = ld;
         if (p2) leadByNumber[p2] = ld;
       });
@@ -292,7 +320,11 @@ export const getAllCallLogs = asyncHandler(async (req, res) => {
         const clean = String(log.phoneNumber).replace(/\D/g, "").slice(-10);
         const matched = leadByNumber[clean];
         if (matched) {
-          log.lead = { _id: matched._id, name: matched.name, phone: matched.phone };
+          log.lead = {
+            _id: matched._id,
+            name: matched.name,
+            phone: matched.phone,
+          };
         }
       });
     }
@@ -358,12 +390,21 @@ export const getCallStatsByUser = asyncHandler(async (req, res) => {
       $group: {
         _id: "$user",
         totalCalls: { $sum: 1 },
-        outgoing: { $sum: { $cond: [{ $eq: ["$callType", "Outgoing"] }, 1, 0] } },
-        incoming: { $sum: { $cond: [{ $eq: ["$callType", "Incoming"] }, 1, 0] } },
+        totalRingingSecs: { $sum: "$ringDuration" },
+        outgoing: {
+          $sum: { $cond: [{ $eq: ["$callType", "Outgoing"] }, 1, 0] },
+        },
+        incoming: {
+          $sum: { $cond: [{ $eq: ["$callType", "Incoming"] }, 1, 0] },
+        },
         missed: { $sum: { $cond: [{ $eq: ["$callType", "Missed"] }, 1, 0] } },
-        rejected: { $sum: { $cond: [{ $eq: ["$callType", "Rejected"] }, 1, 0] } },
+        rejected: {
+          $sum: { $cond: [{ $eq: ["$callType", "Rejected"] }, 1, 0] },
+        },
         totalDurationSecs: { $sum: "$duration" },
-        recordedCalls: { $sum: { $cond: [{ $eq: ["$recordingUploaded", true] }, 1, 0] } },
+        recordedCalls: {
+          $sum: { $cond: [{ $eq: ["$recordingUploaded", true] }, 1, 0] },
+        },
         lastCallAt: { $max: "$callTimestamp" },
       },
     },
@@ -386,6 +427,7 @@ export const getCallStatsByUser = asyncHandler(async (req, res) => {
         callsMade: "$outgoing",
         answered: { $add: ["$outgoing", "$incoming"] },
         notAnswered: { $add: ["$missed", "$rejected"] },
+        totalRingingSecs: 1,  
         missed: 1,
         rejected: 1,
         totalDurationSecs: 1,
