@@ -10,6 +10,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+import { startRecordingCleanupCron } from "./jobs/deleteOldRecordings.job.js";
+
 const server = http.createServer(app);
 
 // ⬇️ YE POORA BLOCK NAYA ADD KARO
@@ -48,8 +50,9 @@ io.on("connection", (socket) => {
 const PORT = config.port;
 
 // Connect to database, phir poller start karo
-connectDB().then(() => {
-  startSheetPoller();
+connectDB().then(() => {                    // 👈 CHANGE
+  startSheetPoller();                       // 👈 ADD
+   startRecordingCleanupCron();  
 });
 
 server.listen(PORT, () => {

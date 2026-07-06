@@ -406,6 +406,7 @@ export const getLeads = asyncHandler(async (req, res) => {
  */
 const formatCallLogForLeadActivity = (callLog) => {
   const durationSeconds = Number(callLog?.duration || 0);
+  const ringSeconds = Number(callLog?.ringDuration || 0);
   const durationLabel =
     durationSeconds > 0
       ? `${Math.floor(durationSeconds / 60)}m ${durationSeconds % 60}s`
@@ -427,6 +428,7 @@ const formatCallLogForLeadActivity = (callLog) => {
     recordingUploaded: Boolean(callLog.recordingUploaded),
     phoneNumber: callLog.phoneNumber,
     duration: durationSeconds,
+    ringDuration: ringSeconds,
     callType: callLog.callType,
     callTimestamp: callLog.callTimestamp,
     createdAt: callLog.callTimestamp || callLog.createdAt,
@@ -1257,6 +1259,10 @@ export const updateLead = asyncHandler(async (req, res) => {
 
   // ── 2. STATUS CHANGE notification ──
   // Sirf tab jab status actually change hua ho
+ if (oldStatus !== lead.status) {
+    lead.closedAt = lead.status === "Closed" ? new Date() : null;
+    await lead.save();
+  }
   if (oldStatus !== lead.status) {
     await sendStatusChangeNotification({
       lead,
@@ -1725,7 +1731,7 @@ export const deleteLead = asyncHandler(async (req, res) => {
     Lead.findByIdAndDelete(id),
     Activity.deleteMany({ leadId: id }),
     CallLog.deleteMany({ lead: id, organization }),
-      CrossSellLead.deleteMany({ leadId: id, organization }),
+    CrossSellLead.deleteMany({ leadId: id, organization }),
   ]);
 
   logger.info(
@@ -1759,6 +1765,7 @@ export const updateLeadStatus = asyncHandler(async (req, res) => {
   }
 
   lead.status = status;
+    lead.closedAt = status === "Closed" ? new Date() : null;
   await lead.save();
 
   await Activity.create({
@@ -2046,7 +2053,7 @@ export const bulkDeleteLeads = asyncHandler(async (req, res) => {
     Reminder.deleteMany({ leadId: { $in: ids }, organization }),
     Payment.deleteMany({ leadId: { $in: ids }, organization }),
     CallLog.deleteMany({ lead: { $in: ids }, organization }),
-     CrossSellLead.deleteMany({ leadId: { $in: ids }, organization }),
+    CrossSellLead.deleteMany({ leadId: { $in: ids }, organization }),
   ]);
   const leadsToDelete = await Lead.find({
     _id: { $in: ids },
@@ -2203,7 +2210,7 @@ export const bulkUpdateStatus = asyncHandler(async (req, res) => {
 
   await Lead.updateMany(
     { _id: { $in: ids }, organization },
-    { $set: { status } },
+     { $set: { status, closedAt: status === "Closed" ? new Date() : null } },
   );
 
   const activities = ids.map((leadId) => ({

@@ -106,6 +106,7 @@ const buildVisibilityFilter = async (user, organization, targetUserId) => {
    Includes: ONLY Lead Owner (assignedTo) — NOT Co-assignee
    Reason: To avoid duplicate counting
 ═══════════════════════════════════════════════════════════════════════════ */
+
 const buildAttributionFilter = async (user, organization, targetUserId) => {
   const isAdmin = user.role === "admin";
   const canViewAll =
@@ -234,17 +235,61 @@ const applyAttributionFilter = (filter, accessFilter) => {
   return filter;
 };
 
+const buildSearchFilter = async (organization, search) => {
+  if (!search || !search.trim()) return null;
+
+  const term = search.trim();
+
+  // Find leads matching the search term
+  const matchingLeads = await Lead.find({
+    organization,
+    $or: [
+      { name: { $regex: term, $options: "i" } },
+      { phone: { $regex: term, $options: "i" } },
+      { email: { $regex: term, $options: "i" } },
+    ],
+  })
+    .select("_id")
+    .lean();
+
+  const leadIds = matchingLeads.map((l) => l._id);
+
+  const conditions = [];
+
+  if (leadIds.length > 0) {
+    conditions.push({ leadId: { $in: leadIds } });
+  }
+
+  // Also search on payment-level text fields
+  conditions.push({ description: { $regex: term, $options: "i" } });
+  conditions.push({ reference: { $regex: term, $options: "i" } });
+  conditions.push({ paymentMode: { $regex: term, $options: "i" } });
+
+  return { $or: conditions };
+};
+
 /* ═══════════════════════════════════════════════════════════════════════════
    GET ALL PAYMENTS
    @route GET /api/v1/payments
+   
 ═══════════════════════════════════════════════════════════════════════════ */
+
 export const getPayments = asyncHandler(async (req, res) => {
-  const { page, limit, status, leadId, userId: targetUserId } = req.query;
+  const {
+    page,
+    limit,
+    status,
+    leadId,
+    userId: targetUserId,
+    search,
+  } = req.query;
   const organization = req.user.organization;
 
   let filter = { organization };
   if (status) filter.status = status;
   if (leadId) filter.leadId = leadId;
+
+  const searchFilter = await buildSearchFilter(organization, search);
 
   const accessFilter = await buildVisibilityFilter(
     req.user,
@@ -253,6 +298,18 @@ export const getPayments = asyncHandler(async (req, res) => {
   );
 
   filter = applyVisibilityFilter(filter, accessFilter);
+
+  if (searchFilter) {
+    if (filter.$or) {
+      // Already has visibility $or, wrap in $and
+      filter.$and = [{ $or: filter.$or }, searchFilter];
+      delete filter.$or;
+    } else if (filter.$and) {
+      filter.$and.push(searchFilter);
+    } else {
+      Object.assign(filter, searchFilter);
+    }
+  }
 
   const {
     skip,
