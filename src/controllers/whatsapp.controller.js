@@ -6,7 +6,8 @@ import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import ApiError from "../utils/apiError.js";
 import logger from "../utils/logger.js";
-
+import { getBaileysStatus, sendBaileysMessage, logoutBaileysSession, initBaileys } from "../services/whatsapp.baileys.service.js";
+import { sendBaileysMedia } from "../services/whatsapp.baileys.service.js";
 const normalizePhoneNumber = (phone) => {
   if (!phone) return "";
   const digits = String(phone).replace(/\D/g, "");
@@ -49,6 +50,37 @@ const sendWhatsappCloudMessage = async (to, text) => {
     },
   };
 
+  const response = await axios.post(url, payload, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  return response.data;
+};
+
+const sendWhatsappCloudMedia = async (to, relativeUrl, mimetype, fileName, caption = "") => {
+  const token = process.env.META_PAGE_ACCESS_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+  if (!token || !phoneNumberId) {
+    throw new ApiError(500, "WhatsApp Cloud API credentials are not configured");
+  }
+
+  const isImage = mimetype?.startsWith("image/");
+  const publicUrl = `${process.env.SERVER_BASE_URL}${relativeUrl}`;
+
+  const payload = {
+    messaging_product: "whatsapp",
+    to,
+    type: isImage ? "image" : "document",
+    [isImage ? "image" : "document"]: isImage
+      ? { link: publicUrl, caption }
+      : { link: publicUrl, filename: fileName, caption },
+  };
+
+  const url = `https://graph.facebook.com/v17.0/${phoneNumberId}/messages`;
   const response = await axios.post(url, payload, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -154,11 +186,50 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Lead phone number is invalid or missing");
   }
 
+  const trimmedMessage = message.trim();
+  const userId = req.user?._id?.toString();
+  const { isConnected: baileysConnected } = getBaileysStatus(userId);
+
+  /* ───────────────────────────────
+     PATH 1 — Baileys connected: send directly, no Cloud API involved
+  ─────────────────────────────── */
+  if (baileysConnected) {
+    try {
+      const waResult = await sendBaileysMessage(userId, recipient, trimmedMessage);
+      const waMessageId = waResult?.key?.id || "";
+
+      const savedMessage = await WhatsappMessage.create({
+        leadId: lead._id,
+        organization: lead.organization,
+        type: "chat",
+        direction: "outgoing",
+        body: trimmedMessage,
+        phone: recipient,
+        status: "sent",
+        source: "baileys",
+        metaMessageId: waMessageId,
+        sentBy: req.user?._id || null,
+      });
+
+      return res
+        .status(200)
+        .json(
+          new ApiResponse(200, savedMessage, "WhatsApp message sent successfully"),
+        );
+    } catch (err) {
+      
+      throw new ApiError(500, `Failed to send via WhatsApp (Baileys): ${err.message}`);
+    }
+  }
+
+  /* ───────────────────────────────
+     PATH 2 — Baileys not connected: fall back to Cloud API (old behaviour)
+  ─────────────────────────────── */
   let cloudResponse;
   try {
-    cloudResponse = await sendWhatsappCloudMessage(recipient, message.trim());
+    cloudResponse = await sendWhatsappCloudMessage(recipient, trimmedMessage);
   } catch (err) {
-    logger.error(`WhatsApp send failed: ${err.message}`);
+   
     const externalMessage =
       err.response?.data?.error?.message ||
       err.message ||
@@ -180,22 +251,21 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
         organization: lead.organization,
         type: "chat",
         direction: "outgoing",
-        body: message.trim(),
+        body: trimmedMessage,
         phone: recipient,
         status: "failed",
         fallback: true,
+        source: "cloud_api",
         metaMessageId: "",
         sentBy: req.user?._id || null,
         metaResponse: err.response?.data || { error: externalMessage },
       });
 
-      logger.info(
-        `Saved fallback WhatsApp record for lead ${lead._id}: ${fallbackMessage._id}`,
-      );
+      
     }
 
     const errorMessage = invalidTokenError
-      ? "WhatsApp API token invalid or not configured. Please check META_PAGE_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID."
+      ? "WhatsApp API token invalid or not configured. Please check META_PAGE_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID, or connect WhatsApp via QR."
       : templateWindowError
         ? "WhatsApp can only send messages after 24 hours using a template. Please open direct WhatsApp chat or use a template message."
         : externalMessage;
@@ -210,9 +280,10 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
     organization: lead.organization,
     type: "chat",
     direction: "outgoing",
-    body: message.trim(),
+    body: trimmedMessage,
     phone: recipient,
     status: "sent",
+    source: "cloud_api",
     metaMessageId,
     sentBy: req.user?._id || null,
     metaResponse: cloudResponse,
@@ -225,17 +296,95 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
     );
 });
 
+export const sendWhatsAppMedia = asyncHandler(async (req, res) => {
+  const { leadId, caption } = req.body;
+  const file = req.file;
+
+  if (!leadId || !file) {
+    throw new ApiError(400, "leadId and file are required");
+  }
+
+  const lead = await Lead.findById(leadId);
+  if (!lead) {
+    throw new ApiError(404, "Lead not found");
+  }
+
+  const recipient = normalizePhoneNumber(lead.phone);
+  if (!recipient) {
+    throw new ApiError(400, "Lead phone number is invalid or missing");
+  }
+
+  const relativeUrl = `/uploads/whatsapp/${file.filename}`;
+  const userId = req.user?._id?.toString();
+  const { isConnected: baileysConnected } = getBaileysStatus(userId);
+  const trimmedCaption = caption?.trim() || "";
+
+  if (baileysConnected) {
+    try {
+      const waResult = await sendBaileysMedia(userId, recipient, file.path, file.originalname, file.mimetype, trimmedCaption);
+      const waMessageId = waResult?.key?.id || "";
+
+      const savedMessage = await WhatsappMessage.create({
+        leadId: lead._id,
+        organization: lead.organization,
+        type: "chat",
+        direction: "outgoing",
+        body: trimmedCaption,
+        phone: recipient,
+        status: "sent",
+        source: "baileys",
+        metaMessageId: waMessageId,
+        sentBy: req.user?._id || null,
+        mediaUrl: relativeUrl,
+        mediaName: file.originalname,
+      });
+
+      return res.status(200).json(new ApiResponse(200, savedMessage, "Media sent successfully"));
+    } catch (err) {
+      throw new ApiError(500, `Failed to send media via WhatsApp (Baileys): ${err.message}`);
+    }
+  }
+
+  let cloudResponse;
+  try {
+    cloudResponse = await sendWhatsappCloudMedia(recipient, relativeUrl, file.mimetype, file.originalname, trimmedCaption);
+  } catch (err) {
+    const externalMessage = err.response?.data?.error?.message || err.message || "Failed to send media";
+    throw new ApiError(err.response?.status || 500, externalMessage);
+  }
+
+  const metaMessageId = cloudResponse.messages?.[0]?.id || "";
+
+  const savedMessage = await WhatsappMessage.create({
+    leadId: lead._id,
+    organization: lead.organization,
+    type: "chat",
+    direction: "outgoing",
+    body: trimmedCaption,
+    phone: recipient,
+    status: "sent",
+    source: "cloud_api",
+    metaMessageId,
+    sentBy: req.user?._id || null,
+    metaResponse: cloudResponse,
+    mediaUrl: relativeUrl,
+    mediaName: file.originalname,
+  });
+
+  res.status(200).json(new ApiResponse(200, savedMessage, "Media sent successfully"));
+});
+
 export const verifyWebhook = (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
   if (mode === "subscribe" && token === process.env.META_VERIFY_TOKEN) {
-    logger.info("WhatsApp webhook verified successfully");
+    
     return res.status(200).send(challenge);
   }
 
-  logger.warn("WhatsApp webhook verification failed — token mismatch");
+  
   return res.status(403).json({ message: "Verification failed" });
 };
 
@@ -244,7 +393,7 @@ export const receiveWebhook = asyncHandler(async (req, res) => {
   const rawBody = req.rawBody || JSON.stringify(req.body);
 
   if (!verifySignature(rawBody, signature)) {
-    logger.warn("WhatsApp webhook: invalid signature");
+    
     return res.status(401).json({ message: "Invalid signature" });
   }
 
@@ -280,9 +429,7 @@ export const receiveWebhook = asyncHandler(async (req, res) => {
           const lead = await findLeadByPhone(from);
 
           if (!lead) {
-            logger.warn(
-              `Incoming WhatsApp message from unknown sender: ${from}`,
-            );
+           
             continue;
           }
 
@@ -317,6 +464,50 @@ export const receiveWebhook = asyncHandler(async (req, res) => {
       }
     }
   } catch (err) {
-    logger.error(`WhatsApp webhook processing failed: ${err.message}`);
+    
   }
+});
+export const logoutWhatsApp = asyncHandler(async (req, res) => {
+  const userId = req.user?._id?.toString();
+  const { isConnected: baileysConnected } = getBaileysStatus(userId);
+
+  if (!baileysConnected) {
+    throw new ApiError(400, "WhatsApp is not currently connected");
+  }
+
+  try {
+    await logoutBaileysSession(userId);
+  } catch (err) {
+    throw new ApiError(500, `Failed to logout WhatsApp: ${err.message}`);
+  }
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, null, "WhatsApp logged out successfully"));
+});
+export const connectWhatsApp = asyncHandler(async (req, res) => {
+  const userId = req.user?._id?.toString();
+  const { isConnected: baileysConnected } = getBaileysStatus(userId);
+
+  if (baileysConnected) {
+    return res
+      .status(200)
+      .json(new ApiResponse(200, null, "WhatsApp already connected"));
+  }
+
+  const io = req.app.get("io");   // ⬅️ neeche note dekho
+  initBaileys(io, userId);
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, null, "WhatsApp connection initiated"));
+});
+
+export const getWhatsAppStatus = asyncHandler(async (req, res) => {
+  const userId = req.user?._id?.toString();
+  const status = getBaileysStatus(userId);
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, status, "WhatsApp status fetched"));
 });

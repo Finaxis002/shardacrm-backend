@@ -17,6 +17,11 @@ const whatsappMessageSchema = new mongoose.Schema(
       enum: ["chat", "call"],
       default: "chat",
     },
+    callType: {
+      type: String,
+      enum: ["incoming", "outgoing", "missed", "video"],
+      default: null,
+    },
     direction: {
       type: String,
       enum: ["outgoing", "incoming"],
@@ -35,6 +40,11 @@ const whatsappMessageSchema = new mongoose.Schema(
       enum: ["sent", "delivered", "read", "failed", "received"],
       default: "sent",
     },
+    source: {
+      type: String,
+      enum: ["cloud_api", "baileys"],
+      default: "cloud_api",
+    },
     metaMessageId: {
       type: String,
       default: "",
@@ -48,6 +58,11 @@ const whatsappMessageSchema = new mongoose.Schema(
       default: "",
     },
     sentBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    waUserId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,
