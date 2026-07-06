@@ -390,18 +390,40 @@ export const getCallStatsByUser = asyncHandler(async (req, res) => {
       $group: {
         _id: "$user",
         totalCalls: { $sum: 1 },
+        // Outgoing direction 
+        outgoingCalls: {
+          $sum: {
+            $cond: [{ $in: ["$callType", ["Outgoing", "No Answer"]] }, 1, 0],
+          },
+        },
+        // Incoming direction 
+        incomingCalls: {
+          $sum: {
+            $cond: [
+              { $in: ["$callType", ["Incoming", "Missed", "Rejected"]] },
+              1,
+              0,
+            ],
+          },
+        },
+        // Genuinely connected 
+        connectedCalls: {
+          $sum: {
+            $cond: [{ $in: ["$callType", ["Outgoing", "Incoming"]] }, 1, 0],
+          },
+        },
+        // Connect nahi hui
+        notConnectedCalls: {
+          $sum: {
+            $cond: [
+              { $in: ["$callType", ["Missed", "Rejected", "No Answer"]] },
+              1,
+              0,
+            ],
+          },
+        },
+        talkTimeSecs: { $sum: "$duration" },
         totalRingingSecs: { $sum: "$ringDuration" },
-        outgoing: {
-          $sum: { $cond: [{ $eq: ["$callType", "Outgoing"] }, 1, 0] },
-        },
-        incoming: {
-          $sum: { $cond: [{ $eq: ["$callType", "Incoming"] }, 1, 0] },
-        },
-        missed: { $sum: { $cond: [{ $eq: ["$callType", "Missed"] }, 1, 0] } },
-        rejected: {
-          $sum: { $cond: [{ $eq: ["$callType", "Rejected"] }, 1, 0] },
-        },
-        totalDurationSecs: { $sum: "$duration" },
         recordedCalls: {
           $sum: { $cond: [{ $eq: ["$recordingUploaded", true] }, 1, 0] },
         },
@@ -424,13 +446,12 @@ export const getCallStatsByUser = asyncHandler(async (req, res) => {
         userName: { $ifNull: ["$userInfo.name", "Unknown user"] },
         userEmail: "$userInfo.email",
         totalCalls: 1,
-        callsMade: "$outgoing",
-        answered: { $add: ["$outgoing", "$incoming"] },
-        notAnswered: { $add: ["$missed", "$rejected"] },
-        totalRingingSecs: 1,  
-        missed: 1,
-        rejected: 1,
-        totalDurationSecs: 1,
+        outgoingCalls: 1,
+        incomingCalls: 1,
+        connectedCalls: 1,
+        notConnectedCalls: 1,
+        talkTimeSecs: 1,
+        totalRingingSecs: 1,
         recordedCalls: 1,
         lastCallAt: 1,
       },
