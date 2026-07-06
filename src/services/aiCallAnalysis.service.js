@@ -23,22 +23,31 @@ const RETRY_DELAY_MS = 2000;
 const INLINE_SIZE_LIMIT = 15 * 1024 * 1024; // 15MB
 
 const ANALYSIS_PROMPT = `
-You are analyzing a sales call recording for a CRM system.
+You are an expert sales call analyst for a CRM system used by a financial services / CA firm in India.
 Listen to the audio carefully and respond with ONLY a valid JSON object
 (no markdown, no code fences, no extra text) in exactly this shape:
 
 {
-  "transcript": "Full transcript of the call, speaker-labelled if possible",
-  "summary": "A concise 3-5 sentence summary of what was discussed",
-  "intent": "One short phrase describing the customer's intent/interest level",
-  "redFlags": ["short phrase", "short phrase"],
-  "objections": ["short phrase", "short phrase"],
-  "nextSteps": ["short actionable phrase", "short actionable phrase"]
+  "transcript": "Full verbatim transcript, speaker-labelled as Agent: and Customer: where possible",
+  "summary": "A detailed 4-6 sentence summary covering: what the customer needs, what the agent offered, key discussion points, and how the call ended. Be specific — mention actual products, amounts, or services discussed if any.",
+  "intent": "One clear phrase describing the customer's intent AND interest level, e.g. 'Interested in home loan, requested callback' or 'Not interested, already has CA' or 'Warm lead, asked for GST filing details'",
+  "redFlags": [
+    "Specific concern or warning sign observed in the call, e.g. 'Customer mentioned competitor pricing', 'Customer seemed rushed or distracted'"
+  ],
+  "objections": [
+    "Specific objection raised by customer, e.g. 'Price too high', 'Already using another CA firm', 'Not the decision maker'"
+  ],
+  "nextSteps": [
+    "Concrete follow-up action for the agent, e.g. 'Send product brochure on WhatsApp', 'Schedule callback for Thursday', 'Share GST filing fee structure'"
+  ]
 }
 
-If the audio is silent, inaudible, or not a real conversation, still return
-valid JSON with empty/best-effort values instead of failing.
-Keep arrays empty ([]) if nothing relevant was found — never omit the keys.
+Rules:
+- Be specific and actionable — generic phrases like "follow up with customer" are NOT acceptable
+- If names, amounts, or services are mentioned in the call, include them
+- If the audio is in Hindi or Hinglish, still respond in English
+- If audio is silent or inaudible, return valid JSON with empty arrays and explain in summary
+- Never omit any keys from the JSON
 `;
 
 const getMimeType = (filename) => {
@@ -177,15 +186,27 @@ export const analyzeWithGroqFallback = async (filePath) => {
     messages: [
       {
         role: "user",
-        content: `You are analyzing a sales call transcript for a CRM system.
-Respond with ONLY a valid JSON object (no markdown, no code fences) in exactly this shape:
+        content: `You are an expert sales call analyst for a CRM system used by a financial services / CA firm in India.
+Analyze the following call transcript and respond with ONLY a valid JSON object (no markdown, no code fences) in exactly this shape:
 {
-  "summary": "A concise 3-5 sentence summary",
-  "intent": "One short phrase describing customer intent/interest level",
-  "redFlags": ["short phrase"],
-  "objections": ["short phrase"],
-  "nextSteps": ["short actionable phrase"]
+  "summary": "A detailed 4-6 sentence summary covering: what the customer needs, what the agent offered, key discussion points, and how the call ended. Be specific — mention actual products, amounts, or services discussed if any.",
+  "intent": "One clear phrase describing the customer's intent AND interest level, e.g. 'Interested in home loan, requested callback' or 'Not interested, already has CA'",
+  "redFlags": [
+    "Specific concern or warning sign, e.g. 'Customer mentioned competitor', 'Customer seemed unsure about pricing'"
+  ],
+  "objections": [
+    "Specific objection raised, e.g. 'Price too high', 'Already using another firm', 'Not the decision maker'"
+  ],
+  "nextSteps": [
+    "Concrete follow-up action, e.g. 'Send fee structure on WhatsApp', 'Schedule callback for Thursday', 'Share GST filing details'"
+  ]
 }
+
+Rules:
+- Be specific — generic phrases like "follow up with customer" are NOT acceptable
+- If names, amounts, or services are mentioned, include them
+- If transcript is in Hindi or Hinglish, still respond in English
+- Never omit any keys
 
 Transcript:
 ${transcript}`,

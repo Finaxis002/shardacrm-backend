@@ -122,6 +122,20 @@ app.use(
     }
   }),
 );
+// ── WhatsApp media file serving ──
+app.use(
+  "/uploads/whatsapp",
+  (req, res, next) => {
+    res.header("Cross-Origin-Resource-Policy", "cross-origin");
+    res.header("Access-Control-Allow-Origin", "*");
+    next();
+  },
+  express.static(path.join(process.cwd(), "uploads", "whatsapp"), {
+    setHeaders: (res) => {
+      res.header("Cross-Origin-Resource-Policy", "cross-origin");
+    },
+  }),
+);
 // New Live Test Route  
 app.get("/api/v1/test-live", (req, res) => {
   res.status(200).json({
