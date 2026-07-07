@@ -11,7 +11,9 @@ import {
   receiveWebhook,
   logoutWhatsApp, 
   connectWhatsApp,
-  getWhatsAppStatus,         
+  getWhatsAppStatus,
+  getUnreadCounts,
+  markMessagesRead,
 } from "../controllers/whatsapp.controller.js";
 
 const router = Router();
@@ -23,7 +25,9 @@ router.patch("/messages/:id", verifyJWT, updateWhatsAppMessage);
 router.delete("/messages/:id", verifyJWT, deleteWhatsAppMessage);
 router.post("/logout", verifyJWT, logoutWhatsApp);  
 router.post("/connect", verifyJWT, connectWhatsApp);       // ⬅️ NAYA
-router.get("/status", verifyJWT, getWhatsAppStatus);  
+router.get("/status", verifyJWT, getWhatsAppStatus);
+router.post("/unread-counts", verifyJWT, getUnreadCounts);
+router.patch("/mark-read/:leadId", verifyJWT, markMessagesRead);
 router.get("/webhook", verifyWebhook);
 router.post("/webhook", receiveWebhook);
 

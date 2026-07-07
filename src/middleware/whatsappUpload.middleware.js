@@ -17,5 +17,5 @@ const storage = multer.diskStorage({
 
 export const uploadWhatsappMedia = multer({
   storage,
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB
+  limits: { fileSize: 100 * 1024 * 1024 },
 }).single("file");
