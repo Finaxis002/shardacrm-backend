@@ -119,18 +119,6 @@ const resolveLidToPhone = async (sock, lidJid, session, maxAttempts = 5, delayMs
     return altJid.split("@")[0].split(":")[0];
   }
 
-  // DEBUG: ek hi baar check karo ki lidMapping object mein kya available hai
-  if (!resolveLidToPhone._debugged) {
-    resolveLidToPhone._debugged = true;
-    try {
-      const lm = sock.signalRepository?.lidMapping;
-      logger.info?.(`[LID DEBUG] lidMapping keys: ${lm ? Object.getOwnPropertyNames(Object.getPrototypeOf(lm)).join(", ") : "undefined"}`);
-      logger.info?.(`[LID DEBUG] msgKey received: ${JSON.stringify(msgKey)}`);
-    } catch (e) {
-      logger.warn?.(`[LID DEBUG] could not inspect lidMapping: ${e.message}`);
-    }
-  }
-
   // ── Step 2: signalRepository se retry ke sath try karo ──
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     // Har retry ke pehle cache dobara check karo — retry receipt beech mein aa sakta hai
@@ -295,6 +283,24 @@ export const initBaileys = async (io, userId) => {
 
         if (!lead) continue;
 
+        /* ── Agar yeh message kisi purane message ka reply hai, uska local _id nikalo ── */
+        const contextInfo =
+          msg.message.extendedTextMessage?.contextInfo ||
+          msg.message.imageMessage?.contextInfo ||
+          msg.message.videoMessage?.contextInfo ||
+          msg.message.documentMessage?.contextInfo ||
+          msg.message.audioMessage?.contextInfo ||
+          null;
+        const quotedStanzaId = contextInfo?.stanzaId || null;
+
+        let replyTo = null;
+        if (quotedStanzaId) {
+          const quotedLocalMsg = await WhatsappMessage.findOne({
+            metaMessageId: quotedStanzaId,
+          }).lean();
+          replyTo = quotedLocalMsg?._id || null;
+        }
+
         const saved = await WhatsappMessage.create({
           leadId: lead._id,
           organization: lead.organization,
@@ -308,8 +314,21 @@ export const initBaileys = async (io, userId) => {
           waUserId: userId,
           mediaUrl,
           mediaName,
+          waMessageRaw: { key: msg.key, message: msg.message },
+          replyTo,
         });
-        io.to(`lead_${lead._id}`).emit("wa-new-message", saved);
+
+        const populatedSaved = await WhatsappMessage.findById(saved._id)
+          .populate("sentBy", "name email")
+          .populate({
+            path: "replyTo",
+            select: "body direction type callType mediaName createdAt sentBy",
+            populate: { path: "sentBy", select: "name email" },
+          })
+          .lean();
+
+        io.to(`lead_${lead._id}`).emit("wa-new-message", populatedSaved);
+        io.emit("wa-unread-new", { leadId: lead._id.toString() });
       }
     });
 
@@ -420,13 +439,14 @@ export const initBaileys = async (io, userId) => {
   }
 };
 
-export const sendBaileysMessage = async (userId, phone, text) => {
+export const sendBaileysMessage = async (userId, phone, text, quotedRaw = null) => {
   const session = sessions.get(userId);
   if (!session?.sock || !session.isConnected) {
     throw new Error("Baileys not connected");
   }
   const jid = `${phone}@s.whatsapp.net`;
-  const result = await session.sock.sendMessage(jid, { text });
+  const options = quotedRaw ? { quoted: quotedRaw } : undefined;
+  const result = await session.sock.sendMessage(jid, { text }, options);
   return result;
 };
 
@@ -445,7 +465,7 @@ export const logoutBaileysSession = async (userId) => {
   }
   await session.sock.logout();
 };
-export const sendBaileysMedia = async (userId, phone, filePath, fileName, mimetype, caption = "") => {
+export const sendBaileysMedia = async (userId, phone, filePath, fileName, mimetype, caption = "", quotedRaw = null) => {
   const session = sessions.get(userId);
   if (!session?.sock || !session.isConnected) {
     throw new Error("Baileys not connected");
@@ -455,7 +475,8 @@ export const sendBaileysMedia = async (userId, phone, filePath, fileName, mimety
   const content = isImage
     ? { image: { url: filePath }, caption }
     : { document: { url: filePath }, fileName, mimetype, caption };
+  const options = quotedRaw ? { quoted: quotedRaw } : undefined;
 
-  const result = await session.sock.sendMessage(jid, content);
+  const result = await session.sock.sendMessage(jid, content, options);
   return result;
 };

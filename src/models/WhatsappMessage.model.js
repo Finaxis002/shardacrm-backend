@@ -79,10 +79,22 @@ const whatsappMessageSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "WhatsappMessage",
+      default: null,
+    },
+    waMessageRaw: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+    readByAgent: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true },
 );
-
 whatsappMessageSchema.index({ leadId: 1, createdAt: -1 });
 
 const WhatsappMessage = mongoose.model(
