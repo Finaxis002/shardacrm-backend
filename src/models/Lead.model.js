@@ -103,8 +103,37 @@ const leadSchema = new mongoose.Schema(
           ref: "User",
           default: null,
         },
+
+    // AI Analysis
+    transcript: {
+      type: String,
+      default: "",
+    },
+    summary: {
+      type: String,
+      default: "",
+    },
+    intent: {
+      type: String,
+      default: "",
+    },
+    redFlags: [
+      {
+        type: String,
       },
     ],
+    objections: [
+      {
+        type: String,
+      },
+    ],
+    nextSteps: [
+      {
+        type: String,
+      },
+    ],
+  },
+],
     customFields: {
       type: Map,
       of: String,

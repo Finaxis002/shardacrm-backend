@@ -3,6 +3,7 @@ import {
   uploadRecordingMiddleware,
   uploadRecordingFile,
   deleteRecording,
+   generateRecordingSummary,
 } from "../controllers/recording.upload.controller.js";
 import {
   getLeads,
@@ -49,6 +50,10 @@ router.get("/stats/overview", getLeadStats);
 router.get("/analytics", getLeadsAnalytics);
 router.get("/:id", getLead);
 router.post("/:id/recordings/upload", uploadRecordingMiddleware, uploadRecordingFile);
+router.post(
+  "/:id/recordings/:filename/summary",
+  generateRecordingSummary
+);
 router.delete("/:id/recordings/:filename", deleteRecording);
 // POST routes
 router.post(
