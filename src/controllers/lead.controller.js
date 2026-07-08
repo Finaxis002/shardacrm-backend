@@ -1221,6 +1221,29 @@ export const updateLead = asyncHandler(async (req, res) => {
 
   await lead.save();
   await lead.populate("assignedTo", "name email");
+  const newAlternatePhone = lead.alternatePhone;
+  if (newAlternatePhone && newAlternatePhone !== oldLead.alternatePhone) {
+    const cleanAltNumber = String(newAlternatePhone)
+      .replace(/\D/g, "")
+      .slice(-10);
+
+    if (cleanAltNumber) {
+      const backfillResult = await CallLog.updateMany(
+        {
+          organization,
+          lead: null,
+          phoneNumber: { $regex: cleanAltNumber + "$" },
+        },
+        { $set: { lead: lead._id } },
+      );
+
+      if (backfillResult.modifiedCount > 0) {
+        logger.info(
+          `Backfilled ${backfillResult.modifiedCount} orphan call log(s) to lead ${lead._id} via alternatePhone ${newAlternatePhone}`,
+        );
+      }
+    }
+  }
 
   // ════════════════════════════════════════════════════════════
   //  SMART NOTIFICATIONS - Sirf actual change pe trigger hongi
@@ -1259,7 +1282,7 @@ export const updateLead = asyncHandler(async (req, res) => {
 
   // ── 2. STATUS CHANGE notification ──
   // Sirf tab jab status actually change hua ho
- if (oldStatus !== lead.status) {
+  if (oldStatus !== lead.status) {
     lead.closedAt = lead.status === "Closed" ? new Date() : null;
     await lead.save();
   }
@@ -1765,7 +1788,7 @@ export const updateLeadStatus = asyncHandler(async (req, res) => {
   }
 
   lead.status = status;
-    lead.closedAt = status === "Closed" ? new Date() : null;
+  lead.closedAt = status === "Closed" ? new Date() : null;
   await lead.save();
 
   await Activity.create({
@@ -2210,7 +2233,7 @@ export const bulkUpdateStatus = asyncHandler(async (req, res) => {
 
   await Lead.updateMany(
     { _id: { $in: ids }, organization },
-     { $set: { status, closedAt: status === "Closed" ? new Date() : null } },
+    { $set: { status, closedAt: status === "Closed" ? new Date() : null } },
   );
 
   const activities = ids.map((leadId) => ({
