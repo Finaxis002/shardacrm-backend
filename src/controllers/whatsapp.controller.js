@@ -7,7 +7,7 @@ import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import ApiError from "../utils/apiError.js";
 import logger from "../utils/logger.js";
-import { getBaileysStatus, sendBaileysMessage, logoutBaileysSession, initBaileys } from "../services/whatsapp.baileys.service.js";
+import { getBaileysStatus, sendBaileysMessage, logoutBaileysSession, initBaileys, sendBaileysPresence, subscribeBaileysPresence, editBaileysMessage } from "../services/whatsapp.baileys.service.js";
 import { sendBaileysMedia } from "../services/whatsapp.baileys.service.js";
 const normalizePhoneNumber = (phone) => {
   if (!phone) return "";
@@ -73,15 +73,27 @@ const sendWhatsappCloudMedia = async (to, relativeUrl, mimetype, fileName, capti
   }
 
   const isImage = mimetype?.startsWith("image/");
+  const isAudio = mimetype?.startsWith("audio/");
   const publicUrl = `${process.env.SERVER_BASE_URL}${relativeUrl}`;
+
+  let mediaType;
+  let mediaPayload;
+  if (isAudio) {
+    mediaType = "audio";
+    mediaPayload = { link: publicUrl }; // Cloud API audio message caption/filename support nahi karta
+  } else if (isImage) {
+    mediaType = "image";
+    mediaPayload = { link: publicUrl, caption };
+  } else {
+    mediaType = "document";
+    mediaPayload = { link: publicUrl, filename: fileName, caption };
+  }
 
   const payload = {
     messaging_product: "whatsapp",
     to,
-    type: isImage ? "image" : "document",
-    [isImage ? "image" : "document"]: isImage
-      ? { link: publicUrl, caption }
-      : { link: publicUrl, filename: fileName, caption },
+    type: mediaType,
+    [mediaType]: mediaPayload,
   };
 
   const url = `https://graph.facebook.com/v17.0/${phoneNumberId}/messages`;
@@ -148,7 +160,20 @@ export const updateWhatsAppMessage = asyncHandler(async (req, res) => {
     throw new ApiError(403, "Only outgoing messages can be edited");
   }
 
-  message.body = body.trim();
+  const trimmedBody = body.trim();
+  const userId = req.user?._id?.toString();
+  const { isConnected: baileysConnected } = getBaileysStatus(userId);
+
+  // Baileys se actual WhatsApp par bhi edit bhejo (agar connected hai aur message Baileys se gaya tha)
+  if (baileysConnected && message.source === "baileys" && message.waMessageRaw?.key) {
+    try {
+      await editBaileysMessage(userId, message.phone, trimmedBody, message.waMessageRaw.key);
+    } catch (err) {
+      throw new ApiError(500, `Failed to edit message on WhatsApp: ${err.message}`);
+    }
+  }
+
+  message.body = trimmedBody;
   await message.save();
 
   const updated = await WhatsappMessage.findById(messageId)
@@ -368,7 +393,8 @@ export const sendWhatsAppMedia = asyncHandler(async (req, res) => {
   const relativeUrl = `/uploads/whatsapp/${file.filename}`;
   const userId = req.user?._id?.toString();
   const { isConnected: baileysConnected } = getBaileysStatus(userId);
-  const trimmedCaption = caption?.trim() || "";
+  const isVoiceNote = Boolean(file.mimetype?.startsWith("audio/"));
+  const trimmedCaption = isVoiceNote ? "" : (caption?.trim() || "");
 
   if (baileysConnected) {
     try {
@@ -394,6 +420,7 @@ export const sendWhatsAppMedia = asyncHandler(async (req, res) => {
         sentBy: req.user?._id || null,
         mediaUrl: relativeUrl,
         mediaName: file.originalname,
+        isVoiceNote,
         replyTo: replyToId || null,
         waMessageRaw: { key: waResult?.key, message: waResult?.message },
       });
@@ -448,6 +475,7 @@ export const sendWhatsAppMedia = asyncHandler(async (req, res) => {
     metaResponse: cloudResponse,
     mediaUrl: relativeUrl,
     mediaName: file.originalname,
+    isVoiceNote,
     replyTo: replyToId || null,
   });
 
@@ -652,4 +680,49 @@ export const markMessagesRead = asyncHandler(async (req, res) => {
   }
 
   res.status(200).json(new ApiResponse(200, null, "Messages marked as read"));
+});
+
+export const sendTypingStatus = asyncHandler(async (req, res) => {
+  const { leadId, state } = req.body; // state: "composing" | "paused" | "recording"
+  if (!leadId || !state) {
+    throw new ApiError(400, "leadId and state are required");
+  }
+
+  const lead = await Lead.findById(leadId).lean();
+  if (!lead) {
+    throw new ApiError(404, "Lead not found");
+  }
+
+  const recipient = normalizePhoneNumber(lead.phone);
+  const userId = req.user?._id?.toString();
+  const { isConnected: baileysConnected } = getBaileysStatus(userId);
+
+  if (baileysConnected && recipient) {
+    // Typing presence sirf Baileys (self-hosted) mein kaam karta hai, Cloud API isko expose nahi karta
+    sendBaileysPresence(userId, recipient, state).catch(() => {});
+  }
+
+  res.status(200).json(new ApiResponse(200, null, "Typing status sent"));
+});
+
+export const subscribePresence = asyncHandler(async (req, res) => {
+  const { leadId } = req.body;
+  if (!leadId) {
+    throw new ApiError(400, "leadId is required");
+  }
+
+  const lead = await Lead.findById(leadId).lean();
+  if (!lead) {
+    throw new ApiError(404, "Lead not found");
+  }
+
+  const recipient = normalizePhoneNumber(lead.phone);
+  const userId = req.user?._id?.toString();
+  const { isConnected: baileysConnected } = getBaileysStatus(userId);
+
+  if (baileysConnected && recipient) {
+    subscribeBaileysPresence(userId, recipient).catch(() => {});
+  }
+
+  res.status(200).json(new ApiResponse(200, null, "Presence subscribed"));
 });

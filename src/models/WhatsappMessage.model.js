@@ -57,6 +57,10 @@ const whatsappMessageSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    isVoiceNote: {
+      type: Boolean,
+      default: false,
+    },
     sentBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

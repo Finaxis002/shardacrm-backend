@@ -14,6 +14,8 @@ import {
   getWhatsAppStatus,
   getUnreadCounts,
   markMessagesRead,
+  sendTypingStatus,
+  subscribePresence, 
 } from "../controllers/whatsapp.controller.js";
 
 const router = Router();
@@ -28,6 +30,8 @@ router.post("/connect", verifyJWT, connectWhatsApp);       // ⬅️ NAYA
 router.get("/status", verifyJWT, getWhatsAppStatus);
 router.post("/unread-counts", verifyJWT, getUnreadCounts);
 router.patch("/mark-read/:leadId", verifyJWT, markMessagesRead);
+router.post("/typing", verifyJWT, sendTypingStatus);   // ⬅️ NAYA
+router.post("/subscribe-presence", verifyJWT, subscribePresence);
 router.get("/webhook", verifyWebhook);
 router.post("/webhook", receiveWebhook);
 
