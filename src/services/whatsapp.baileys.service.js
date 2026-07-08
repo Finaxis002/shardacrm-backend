@@ -185,6 +185,7 @@ export const initBaileys = async (io, userId) => {
         session.isConnected = true;
         session.currentQR = null;
         io.to(`user_${userId}`).emit("wa-connected");
+        sock.sendPresenceUpdate("available").catch(() => {});
       }
 
       if (connection === "close") {
@@ -210,7 +211,9 @@ export const initBaileys = async (io, userId) => {
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
   if (type !== "notify") return;
   for (const msg of messages) {
-    if (!msg.message || msg.key.fromMe) continue;
+    if (!msg.message) continue;
+
+        const isFromMe = Boolean(msg.key.fromMe);
 
         const remoteJid = msg.key.remoteJid || "";
         if (
@@ -230,16 +233,18 @@ export const initBaileys = async (io, userId) => {
             continue;
           }
           from = resolved;
+          session.lidPnCache.set(remoteJid, resolved);
         }
 
         if (!from) continue;
 
-        const mediaMsg =
+       const mediaMsg =
           msg.message.imageMessage ||
           msg.message.documentMessage ||
           msg.message.videoMessage ||
           msg.message.audioMessage ||
           null;
+        const isIncomingVoiceNote = Boolean(msg.message.audioMessage);
 
         const text =
           msg.message.conversation ||
@@ -273,6 +278,7 @@ export const initBaileys = async (io, userId) => {
           const alreadyExists = await WhatsappMessage.findOne({
             metaMessageId: messageId,
           }).lean();
+          // Agar yeh CRM se bheja gaya tha, toh already save ho chuka hoga — duplicate mat banao
           if (alreadyExists) continue;
         }
 
@@ -301,21 +307,23 @@ export const initBaileys = async (io, userId) => {
           replyTo = quotedLocalMsg?._id || null;
         }
 
-        const saved = await WhatsappMessage.create({
+       const saved = await WhatsappMessage.create({
           leadId: lead._id,
           organization: lead.organization,
           type: "chat",
-          direction: "incoming",
+          direction: isFromMe ? "outgoing" : "incoming",
           body: text,
           phone: from,
-          status: "received",
+          status: isFromMe ? "sent" : "received",
           source: "baileys",
           metaMessageId: messageId,
           waUserId: userId,
           mediaUrl,
           mediaName,
+          isVoiceNote: isIncomingVoiceNote,
           waMessageRaw: { key: msg.key, message: msg.message },
           replyTo,
+          // Phone se seedha bheja gaya message — CRM user ne nahi bheja, isliye sentBy null rahega
         });
 
         const populatedSaved = await WhatsappMessage.findById(saved._id)
@@ -328,7 +336,9 @@ export const initBaileys = async (io, userId) => {
           .lean();
 
         io.to(`lead_${lead._id}`).emit("wa-new-message", populatedSaved);
-        io.emit("wa-unread-new", { leadId: lead._id.toString() });
+        if (!isFromMe) {
+          io.emit("wa-unread-new", { leadId: lead._id.toString() });
+        }
       }
     });
 
@@ -346,6 +356,43 @@ export const initBaileys = async (io, userId) => {
 
         await updateMessageStatusSafely(messageId, mappedStatus, io);
       }
+    });
+
+    sock.ev.on("presence.update", ({ id, presences }) => {
+       
+      try {
+        const presenceJid = id;
+        const entries = Object.values(presences || {});
+        const latest = entries[entries.length - 1];
+        const lastKnown = latest?.lastKnownPresence;
+        if (!lastKnown) return;
+
+        let phoneNumber = presenceJid.split("@")[0];
+        if (presenceJid.endsWith("@lid")) {
+          const cached = session.lidPnCache.get(presenceJid);
+          
+          if (!cached) return;
+          phoneNumber = cached;
+        }
+
+        const last10 = phoneNumber.slice(-10);
+        Lead.findOne({ phone: { $regex: `${last10}$` } })
+          .select("_id")
+          .lean()
+          .then((lead) => {
+  
+  if (!lead) return;
+  const roomName = `lead_${lead._id}`;
+  const roomSize = io.sockets.adapter.rooms.get(roomName)?.size || 0;
+  
+  io.to(roomName).emit("wa-typing", {
+    leadId: lead._id.toString(),
+    state: lastKnown,
+  });
+  
+})
+          .catch(() => {});
+      } catch (e) {}
     });
 
     /* ── Read receipts jab chat already open ho, alag event se aate hain ── */
@@ -445,6 +492,7 @@ export const sendBaileysMessage = async (userId, phone, text, quotedRaw = null) 
     throw new Error("Baileys not connected");
   }
   const jid = `${phone}@s.whatsapp.net`;
+  await session.sock.presenceSubscribe(jid).catch(() => {});
   const options = quotedRaw ? { quoted: quotedRaw } : undefined;
   const result = await session.sock.sendMessage(jid, { text }, options);
   return result;
@@ -465,18 +513,74 @@ export const logoutBaileysSession = async (userId) => {
   }
   await session.sock.logout();
 };
+
 export const sendBaileysMedia = async (userId, phone, filePath, fileName, mimetype, caption = "", quotedRaw = null) => {
   const session = sessions.get(userId);
   if (!session?.sock || !session.isConnected) {
     throw new Error("Baileys not connected");
   }
   const jid = `${phone}@s.whatsapp.net`;
+  await session.sock.presenceSubscribe(jid).catch(() => {});
+
   const isImage = mimetype?.startsWith("image/");
-  const content = isImage
-    ? { image: { url: filePath }, caption }
-    : { document: { url: filePath }, fileName, mimetype, caption };
+  const isAudio = mimetype?.startsWith("audio/");
+
+  let content;
+  if (isAudio) {
+    // Voice note (ptt) — WhatsApp voice notes caption support nahi karte
+    content = {
+      audio: { url: filePath },
+      mimetype: "audio/ogg; codecs=opus",
+      ptt: true,
+    };
+  } else if (isImage) {
+    content = { image: { url: filePath }, caption };
+  } else {
+    content = { document: { url: filePath }, fileName, mimetype, caption };
+  }
+
   const options = quotedRaw ? { quoted: quotedRaw } : undefined;
 
   const result = await session.sock.sendMessage(jid, content, options);
+  return result;
+}
+
+export const sendBaileysPresence = async (userId, phone, state) => {
+  // state: "composing" | "recording" | "paused" | "available"
+  const session = sessions.get(userId);
+  if (!session?.sock || !session.isConnected) return;
+  const jid = `${phone}@s.whatsapp.net`;
+  try {
+    await session.sock.presenceSubscribe(jid);
+    await session.sock.sendPresenceUpdate(state, jid);
+  } catch (e) {
+    // presence errors se chat break nahi hona chahiye
+  }
+};
+
+export const subscribeBaileysPresence = async (userId, phone) => {
+  const session = sessions.get(userId);
+  if (!session?.sock || !session.isConnected) {
+    
+    return;
+  }
+  const jid = `${phone}@s.whatsapp.net`;
+  try {
+    await session.sock.presenceSubscribe(jid);
+    
+  } catch (e) {
+    
+  }
+};
+export const editBaileysMessage = async (userId, phone, newText, messageKey) => {
+  const session = sessions.get(userId);
+  if (!session?.sock || !session.isConnected) {
+    throw new Error("Baileys not connected");
+  }
+  const jid = `${phone}@s.whatsapp.net`;
+  const result = await session.sock.sendMessage(jid, {
+    text: newText,
+    edit: messageKey,
+  });
   return result;
 };
