@@ -50,6 +50,23 @@ const runAiAnalysisInBackground = async (activityId, filePath, leadId, organizat
       },
     });
 
+    await Lead.updateOne(
+  {
+    _id: leadId,
+    "recordings.filename": path.basename(filePath),
+  },
+  {
+    $set: {
+      "recordings.$.transcript": analysis.transcript,
+      "recordings.$.summary": analysis.summary,
+      "recordings.$.intent": analysis.intent,
+      "recordings.$.redFlags": analysis.redFlags,
+      "recordings.$.objections": analysis.objections,
+      "recordings.$.nextSteps": analysis.nextSteps,
+    },
+  }
+);
+
     logger.info(`AI analysis completed for activity ${activityId}`);
  } catch (err) {
     console.error("=== AI ANALYSIS ERROR ===", err);
@@ -87,6 +104,13 @@ export const uploadRecordingFile = asyncHandler(async (req, res) => {
     size: req.file.size,
     uploadedAt: new Date(),
     uploadedBy: req.user._id,
+
+      transcript: "",
+  summary: "",
+  intent: "",
+  redFlags: [],
+  objections: [],
+  nextSteps: [],
   };
 
   lead.recordings = lead.recordings || [];
@@ -106,7 +130,7 @@ export const uploadRecordingFile = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(200, { recording: newRecording }, "Recording uploaded successfully"));
 
   // Fire-and-forget — response already sent above, this runs after
-  runAiAnalysisInBackground(activity._id, req.file.path, lead._id, organization);
+  // runAiAnalysisInBackground(activity._id, req.file.path, lead._id, organization);
 });
 
 export const deleteRecording = asyncHandler(async (req, res) => {
@@ -126,4 +150,54 @@ export const deleteRecording = asyncHandler(async (req, res) => {
   fs.unlink(filePath, () => {});
 
   res.status(200).json(new ApiResponse(200, null, "Recording deleted"));
+});
+
+export const generateRecordingSummary = asyncHandler(async (req, res) => {
+  const { id, filename } = req.params;
+  const organization = req.user.organization;
+
+  const lead = await Lead.findOne({ _id: id, organization });
+
+  if (!lead) {
+    throw new ApiError(404, "Lead not found");
+  }
+
+  const recording = lead.recordings.find(
+    (r) => r.filename === filename
+  );
+
+  if (!recording) {
+    throw new ApiError(404, "Recording not found");
+  }
+
+  const filePath = path.join(
+    __dirname,
+    "..",
+    "uploads",
+    "recordings",
+    filename
+  );
+
+  if (!fs.existsSync(filePath)) {
+    throw new ApiError(404, "Recording file not found");
+  }
+
+  const analysis = await analyzeCallRecording(filePath);
+
+  recording.transcript = analysis.transcript;
+  recording.summary = analysis.summary;
+  recording.intent = analysis.intent;
+  recording.redFlags = analysis.redFlags;
+  recording.objections = analysis.objections;
+  recording.nextSteps = analysis.nextSteps;
+
+  await lead.save();
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      recording,
+      "Summary generated successfully"
+    )
+  );
 });

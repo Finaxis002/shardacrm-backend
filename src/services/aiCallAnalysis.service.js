@@ -75,7 +75,12 @@ const generateWithRetry = async (audioPart, modelName, attempt = 1) => {
     const result = await model.generateContent([ANALYSIS_PROMPT, audioPart]);
     return result.response.text();
   } catch (err) {
-    const isOverloaded = err?.status === 503 || /overloaded|high demand/i.test(err?.message || "");
+    const isOverloaded =
+  err?.status === 503 ||
+  err?.status === 429 ||
+  /overloaded|high demand|quota|too many requests/i.test(
+    err?.message || ""
+  );
 
     if (isOverloaded && attempt < MAX_RETRIES) {
       const delay = RETRY_DELAY_MS * attempt;
@@ -125,20 +130,12 @@ export const analyzeCallRecording = async (filePath) => {
     };
   }
 
+try {
   const responseText = await generateWithRetry(audioPart, MODEL_NAME);
 
-  let parsed;
-  try {
-    parsed = extractJson(responseText);
-  } catch (err) {
-    logger.error("Failed to parse Gemini response as JSON", {
-      error: err.message,
-      raw: responseText?.slice(0, 500),
-    });
-    throw err;
-  }
+  const parsed = extractJson(responseText);
 
-return {
+  return {
     transcript: parsed.transcript || "",
     summary: parsed.summary || "",
     intent: parsed.intent || "",
@@ -146,6 +143,13 @@ return {
     objections: Array.isArray(parsed.objections) ? parsed.objections : [],
     nextSteps: Array.isArray(parsed.nextSteps) ? parsed.nextSteps : [],
   };
+
+} catch (err) {
+  logger.warn(`Gemini failed: ${err.message}`);
+  logger.warn("Switching to Groq fallback...");
+
+  return await analyzeWithGroqFallback(filePath);
+}
 };
 
 export const analyzeWithGroqFallback = async (filePath) => {
