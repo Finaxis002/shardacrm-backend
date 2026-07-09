@@ -73,6 +73,11 @@ const notificationSchema = new mongoose.Schema(
       ref: "Organization",
       required: true,
     },
+    expiresAt: {
+      type: Date,
+      default: () => new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
+      expires: 60 * 24 * 60 * 60,
+    },
   },
   { timestamps: true },
 );
