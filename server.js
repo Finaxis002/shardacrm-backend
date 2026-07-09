@@ -33,6 +33,7 @@ io.on("connection", (socket) => {
 
   socket.on("join-user-room", (userId) => {
     socket.join(`user_${userId}`);
+     logger.info(`Socket ${socket.id} joined room: user_${userId}`);
 
     const { isConnected, currentQR } = getBaileysStatus(userId);
     if (isConnected) {
@@ -41,6 +42,11 @@ io.on("connection", (socket) => {
       socket.emit("wa-qr", currentQR);
     }
   });
+
+socket.on("trigger-mobile-call", ({ userId, phoneNumber, leadName }) => {
+  logger.info(`trigger-mobile-call received for user_${userId}, phone: ${phoneNumber}`); // 👈 ADD KARO
+  io.to(`user_${userId}`).emit("incoming-call-trigger", { phoneNumber, leadName });
+});
 
   socket.on("disconnect", () => {
     logger.info(`Socket disconnected: ${socket.id}`);
