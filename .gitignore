@@ -40,3 +40,9 @@ uploads/
 .idea/
 *.swp
 *.swo
+
+# Baileys auth state folders (per-user WhatsApp sessions)
+baileys_auth/
+baileys_auth/*
+baileys_auth_*/
+baileys_auth_*/**

@@ -127,10 +127,14 @@ export const getWhatsAppMessages = asyncHandler(async (req, res) => {
   const messages = await WhatsappMessage.find({ leadId })
     .sort({ createdAt: 1 })
     .populate("sentBy", "name email")
+    .populate("waUserId", "name email")
     .populate({
       path: "replyTo",
-      select: "body direction type callType mediaName createdAt sentBy",
-      populate: { path: "sentBy", select: "name email" },
+      select: "body direction type callType mediaName createdAt sentBy waUserId",
+      populate: [
+        { path: "sentBy", select: "name email" },
+        { path: "waUserId", select: "name email" },
+      ],
     })
     .lean();
 
@@ -160,7 +164,15 @@ export const updateWhatsAppMessage = asyncHandler(async (req, res) => {
     throw new ApiError(403, "Only outgoing messages can be edited");
   }
 
+  // WhatsApp jaisa hi edit window — sirf 15 minute tak edit allow hai
+  const EDIT_WINDOW_MS = 15 * 60 * 1000;
+  const messageAge = Date.now() - new Date(message.createdAt).getTime();
+  if (messageAge > EDIT_WINDOW_MS) {
+    throw new ApiError(403, "This message can no longer be edited (edit window of 15 minutes has expired)");
+  }
+
   const trimmedBody = body.trim();
+
   const userId = req.user?._id?.toString();
   const { isConnected: baileysConnected } = getBaileysStatus(userId);
 
@@ -178,6 +190,7 @@ export const updateWhatsAppMessage = asyncHandler(async (req, res) => {
 
   const updated = await WhatsappMessage.findById(messageId)
     .populate("sentBy", "name email")
+    .populate("waUserId", "name email")
     .lean();
 
   res
@@ -205,7 +218,7 @@ export const deleteWhatsAppMessage = asyncHandler(async (req, res) => {
 });
 
 export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
-  const { leadId, message, replyToId } = req.body;
+  const { leadId, message, replyToId, sendAsUserId } = req.body;
   if (!leadId || !message?.trim()) {
     throw new ApiError(400, "leadId and message are required");
   }
@@ -221,8 +234,13 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
   }
 
   const trimmedMessage = message.trim();
-  const userId = req.user?._id?.toString();
+  // sendAsUserId diya ho to us agent ke apne connected session se bhejo
+  const userId = sendAsUserId || req.user?._id?.toString();
   const { isConnected: baileysConnected } = getBaileysStatus(userId);
+
+  if (sendAsUserId && !baileysConnected) {
+    throw new ApiError(400, "Selected agent's WhatsApp is not connected right now.");
+  }
 
   /* ───────────────────────────────
      PATH 1 — Baileys connected: send directly, no Cloud API involved
@@ -238,27 +256,41 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
       const waResult = await sendBaileysMessage(userId, recipient, trimmedMessage, quotedRaw);
       const waMessageId = waResult?.key?.id || "";
 
-      const savedMessage = await WhatsappMessage.create({
-        leadId: lead._id,
-        organization: lead.organization,
-        type: "chat",
-        direction: "outgoing",
-        body: trimmedMessage,
-        phone: recipient,
-        status: "sent",
-        source: "baileys",
-        metaMessageId: waMessageId,
-        sentBy: req.user?._id || null,
-        replyTo: replyToId || null,
-        waMessageRaw: { key: waResult?.key, message: waResult?.message },
-      });
+      // Atomic upsert — agar Baileys ka apna self-echo event pehle hi ek record bana chuka ho
+      // (metaMessageId match karke), to yahan sirf sentBy/status update ho jayega, duplicate nahi banega.
+      const savedMessage = await WhatsappMessage.findOneAndUpdate(
+        { metaMessageId: waMessageId },
+        {
+          $setOnInsert: {
+            leadId: lead._id,
+            organization: lead.organization,
+            type: "chat",
+            direction: "outgoing",
+            body: trimmedMessage,
+            phone: recipient,
+            source: "baileys",
+            metaMessageId: waMessageId,
+            replyTo: replyToId || null,
+            waMessageRaw: { key: waResult?.key, message: waResult?.message },
+          },
+          $set: {
+            status: "sent",
+            sentBy: sendAsUserId || req.user?._id || null,
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      );
 
       const populatedMessage = await WhatsappMessage.findById(savedMessage._id)
         .populate("sentBy", "name email")
+        .populate("waUserId", "name email")
         .populate({
           path: "replyTo",
-          select: "body direction type callType mediaName createdAt sentBy",
-          populate: { path: "sentBy", select: "name email" },
+          select: "body direction type callType mediaName createdAt sentBy waUserId",
+          populate: [
+            { path: "sentBy", select: "name email" },
+            { path: "waUserId", select: "name email" },
+          ],
         })
         .lean();
 
@@ -358,10 +390,14 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
 
   const populatedMessage = await WhatsappMessage.findById(savedMessage._id)
     .populate("sentBy", "name email")
+    .populate("waUserId", "name email")
     .populate({
       path: "replyTo",
-      select: "body direction type callType mediaName createdAt sentBy",
-      populate: { path: "sentBy", select: "name email" },
+      select: "body direction type callType mediaName createdAt sentBy waUserId",
+      populate: [
+        { path: "sentBy", select: "name email" },
+        { path: "waUserId", select: "name email" },
+      ],
     })
     .lean();
 
@@ -373,7 +409,7 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
 });
 
 export const sendWhatsAppMedia = asyncHandler(async (req, res) => {
-  const { leadId, caption, replyToId } = req.body;
+  const { leadId, caption, replyToId, sendAsUserId } = req.body;
   const file = req.file;
 
   if (!leadId || !file) {
@@ -391,8 +427,12 @@ export const sendWhatsAppMedia = asyncHandler(async (req, res) => {
   }
 
   const relativeUrl = `/uploads/whatsapp/${file.filename}`;
-  const userId = req.user?._id?.toString();
+  const userId = sendAsUserId || req.user?._id?.toString();
   const { isConnected: baileysConnected } = getBaileysStatus(userId);
+
+  if (sendAsUserId && !baileysConnected) {
+    throw new ApiError(400, "Selected agent's WhatsApp is not connected right now.");
+  }
   const isVoiceNote = Boolean(file.mimetype?.startsWith("audio/"));
   const trimmedCaption = isVoiceNote ? "" : (caption?.trim() || "");
 
@@ -407,30 +447,42 @@ export const sendWhatsAppMedia = asyncHandler(async (req, res) => {
       const waResult = await sendBaileysMedia(userId, recipient, file.path, file.originalname, file.mimetype, trimmedCaption, quotedRaw);
       const waMessageId = waResult?.key?.id || "";
 
-      const savedMessage = await WhatsappMessage.create({
-        leadId: lead._id,
-        organization: lead.organization,
-        type: "chat",
-        direction: "outgoing",
-        body: trimmedCaption,
-        phone: recipient,
-        status: "sent",
-        source: "baileys",
-        metaMessageId: waMessageId,
-        sentBy: req.user?._id || null,
-        mediaUrl: relativeUrl,
-        mediaName: file.originalname,
-        isVoiceNote,
-        replyTo: replyToId || null,
-        waMessageRaw: { key: waResult?.key, message: waResult?.message },
-      });
+      const savedMessage = await WhatsappMessage.findOneAndUpdate(
+        { metaMessageId: waMessageId },
+        {
+          $setOnInsert: {
+            leadId: lead._id,
+            organization: lead.organization,
+            type: "chat",
+            direction: "outgoing",
+            body: trimmedCaption,
+            phone: recipient,
+            source: "baileys",
+            metaMessageId: waMessageId,
+            mediaUrl: relativeUrl,
+            mediaName: file.originalname,
+            isVoiceNote,
+            replyTo: replyToId || null,
+            waMessageRaw: { key: waResult?.key, message: waResult?.message },
+          },
+          $set: {
+            status: "sent",
+            sentBy: sendAsUserId || req.user?._id || null,
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      );
 
       const populatedMessage = await WhatsappMessage.findById(savedMessage._id)
         .populate("sentBy", "name email")
+        .populate("waUserId", "name email")
         .populate({
           path: "replyTo",
-          select: "body direction type callType mediaName createdAt sentBy",
-          populate: { path: "sentBy", select: "name email" },
+          select: "body direction type callType mediaName createdAt sentBy waUserId",
+          populate: [
+            { path: "sentBy", select: "name email" },
+            { path: "waUserId", select: "name email" },
+          ],
         })
         .lean();
 
@@ -481,10 +533,14 @@ export const sendWhatsAppMedia = asyncHandler(async (req, res) => {
 
   const populatedMessage = await WhatsappMessage.findById(savedMessage._id)
     .populate("sentBy", "name email")
+    .populate("waUserId", "name email")
     .populate({
       path: "replyTo",
-      select: "body direction type callType mediaName createdAt sentBy",
-      populate: { path: "sentBy", select: "name email" },
+      select: "body direction type callType mediaName createdAt sentBy waUserId",
+      populate: [
+        { path: "sentBy", select: "name email" },
+        { path: "waUserId", select: "name email" },
+      ],
     })
     .lean();
 
@@ -632,6 +688,25 @@ export const getWhatsAppStatus = asyncHandler(async (req, res) => {
   res
     .status(200)
     .json(new ApiResponse(200, status, "WhatsApp status fetched"));
+});
+
+export const getBulkWhatsAppStatus = asyncHandler(async (req, res) => {
+  const { userIds } = req.query;
+  if (!userIds) {
+    return res
+      .status(200)
+      .json(new ApiResponse(200, {}, "No userIds provided"));
+  }
+
+  const ids = String(userIds).split(",").filter(Boolean);
+  const statusMap = {};
+  ids.forEach((id) => {
+    statusMap[id] = getBaileysStatus(id).isConnected;
+  });
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, statusMap, "Bulk WhatsApp status fetched"));
 });
 export const getUnreadCounts = asyncHandler(async (req, res) => {
   const { leadIds } = req.body;
