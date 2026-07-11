@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { verifyJWT } from "../middleware/auth.middleware.js";
 import { uploadWhatsappMedia } from "../middleware/whatsappUpload.middleware.js";
+import { getConversations } from "../controllers/whatsappInbox.controller.js";
 import {
   getWhatsAppMessages,
   sendWhatsAppMessage,
@@ -15,7 +16,8 @@ import {
   getUnreadCounts,
   markMessagesRead,
   sendTypingStatus,
-  subscribePresence, 
+  subscribePresence,
+  getBulkWhatsAppStatus,
 } from "../controllers/whatsapp.controller.js";
 
 const router = Router();
@@ -34,5 +36,6 @@ router.post("/typing", verifyJWT, sendTypingStatus);   // ⬅️ NAYA
 router.post("/subscribe-presence", verifyJWT, subscribePresence);
 router.get("/webhook", verifyWebhook);
 router.post("/webhook", receiveWebhook);
-
+router.get("/status/bulk", verifyJWT, getBulkWhatsAppStatus);
+router.get("/conversations", verifyJWT, getConversations);
 export default router;

@@ -61,6 +61,10 @@ const whatsappMessageSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    waSenderName: {
+      type: String,
+      default: null,
+    },
     sentBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -99,7 +103,11 @@ const whatsappMessageSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+// fast query for lead timeline
 whatsappMessageSchema.index({ leadId: 1, createdAt: -1 });
+// prevent duplicate messages when multiple sockets/processes handle the same upstream event
+// `sparse: true` allows documents without metaMessageId to exist
+whatsappMessageSchema.index({ metaMessageId: 1 }, { unique: true, sparse: true });
 
 const WhatsappMessage = mongoose.model(
   "WhatsappMessage",

@@ -1,10 +1,10 @@
 import {
   makeWASocket,
-  useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
 } from "@whiskeysockets/baileys";
+import { useMongoAuthState, deleteMongoAuthState } from "./baileysMongoAuth.js";
 import fs from "fs";
 import { Boom } from "@hapi/boom";
 import WhatsappMessage from "../models/WhatsappMessage.model.js";
@@ -22,7 +22,42 @@ const baileysLogger = {
   child: () => baileysLogger,
 };
 
-const AUTH_FOLDER_BASE = "baileys_auth";
+const NOISY_PATTERNS = [
+  "Failed to decrypt message with any known session",
+  "Session error:Error: Bad MAC",
+  "Closing open session in favor of incoming prekey bundle",
+  "Closing session:",
+];
+
+const shouldSuppress = (args) => {
+  const text = args.map((a) => (typeof a === "string" ? a : "")).join(" ");
+  return NOISY_PATTERNS.some((p) => text.includes(p));
+};
+
+const originalConsoleLog = console.log.bind(console);
+const originalConsoleError = console.error.bind(console);
+const originalConsoleWarn = console.warn.bind(console);
+const originalConsoleInfo = console.info.bind(console);
+
+console.log = (...args) => {
+  if (shouldSuppress(args)) return;
+  originalConsoleLog(...args);
+};
+
+console.error = (...args) => {
+  if (shouldSuppress(args)) return;
+  originalConsoleError(...args);
+};
+
+console.warn = (...args) => {
+  if (shouldSuppress(args)) return;
+  originalConsoleWarn(...args);
+};
+
+console.info = (...args) => {
+  if (shouldSuppress(args)) return;
+  originalConsoleInfo(...args);
+};
 
 /* ── Status ko sirf upgrade hone do, downgrade (race condition) mat hone do ── */
 const STATUS_RANK = { sent: 1, delivered: 2, read: 3 };
@@ -65,6 +100,7 @@ const getSession = (userId) => {
       isInitializing: false,
       activeCalls: new Map(),
       lidPnCache: new Map(), // Map<lidJid, phoneNumber> — logger se populate hoga
+      accountName: null, // WhatsApp account ka apna profile name (jab phone se seedha msg aaye)
     });
   }
   return sessions.get(userId);
@@ -153,8 +189,7 @@ export const initBaileys = async (io, userId) => {
   session.isInitializing = true;
 
   try {
-    const authFolder = `${AUTH_FOLDER_BASE}_${userId}`;
-    const { state, saveCreds } = await useMultiFileAuthState(authFolder);
+    const { state, saveCreds } = await useMongoAuthState(userId);
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -184,7 +219,9 @@ export const initBaileys = async (io, userId) => {
       if (connection === "open") {
         session.isConnected = true;
         session.currentQR = null;
+        session.accountName = sock.user?.name || sock.user?.verifiedName || null;
         io.to(`user_${userId}`).emit("wa-connected");
+        io.emit("wa-agent-status", { userId, isConnected: true });
         sock.sendPresenceUpdate("available").catch(() => {});
       }
 
@@ -192,16 +229,18 @@ export const initBaileys = async (io, userId) => {
         session.isConnected = false;
         session.isInitializing = false;
         const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+        
         sock?.ev?.removeAllListeners();
         session.sock = null;
+        io.emit("wa-agent-status", { userId, isConnected: false });
 
         if (reason !== DisconnectReason.loggedOut) {
           setTimeout(() => initBaileys(io, userId), 3000);
         } else {
           session.currentQR = null;
-          try {
-            fs.rmSync(authFolder, { recursive: true, force: true });
-          } catch (fsErr) {}
+          session.isConnected = false;
+          session.sock = null;
+          deleteMongoAuthState(userId).catch(() => {});
           io.to(`user_${userId}`).emit("wa-logged-out");
           setTimeout(() => initBaileys(io, userId), 1000);
         }
@@ -307,7 +346,60 @@ export const initBaileys = async (io, userId) => {
           replyTo = quotedLocalMsg?._id || null;
         }
 
-       const saved = await WhatsappMessage.create({
+        // Defensive duplicate checks:
+        // 1) If messageId exists, prefer DB lookup by metaMessageId
+        // 2) Otherwise, detect near-duplicate by lead, phone, body within a short time window
+        const DUP_WINDOW_MS = 10 * 1000; // 10 seconds
+        if (messageId) {
+          const exists = await WhatsappMessage.findOne({ metaMessageId: messageId }).lean();
+          if (exists) {
+            // already saved by another socket/path
+            const populated = await WhatsappMessage.findById(exists._id)
+              .populate("sentBy", "name email")
+              .populate("waUserId", "name email")
+              .populate({
+                path: "replyTo",
+                select: "body direction type callType mediaName createdAt sentBy waUserId",
+                populate: [
+                  { path: "sentBy", select: "name email" },
+                  { path: "waUserId", select: "name email" },
+                ],
+              })
+              .lean();
+            io.to(`lead_${lead._id}`).emit("wa-new-message", populated);
+            if (!isFromMe) io.emit("wa-unread-new", { leadId: lead._id.toString() });
+            continue;
+          }
+        } else {
+          const recent = await WhatsappMessage.findOne({
+            leadId: lead._id,
+            phone: from,
+            body: text,
+            waUserId: userId,
+            createdAt: { $gte: new Date(Date.now() - DUP_WINDOW_MS) },
+          }).lean();
+          if (recent) {
+            const populated = await WhatsappMessage.findById(recent._id)
+              .populate("sentBy", "name email")
+              .populate("waUserId", "name email")
+              .populate({
+                path: "replyTo",
+                select: "body direction type callType mediaName createdAt sentBy waUserId",
+                populate: [
+                  { path: "sentBy", select: "name email" },
+                  { path: "waUserId", select: "name email" },
+                ],
+              })
+              .lean();
+            io.to(`lead_${lead._id}`).emit("wa-new-message", populated);
+            if (!isFromMe) io.emit("wa-unread-new", { leadId: lead._id.toString() });
+            continue;
+          }
+        }
+
+        // Atomic upsert — agar CRM controller ne already isi metaMessageId se record bana diya ho
+        // (sentBy sahi wala), to $setOnInsert kuch nahi karega, sirf wahi doc mil jayega — duplicate nahi banega.
+        const insertFields = {
           leadId: lead._id,
           organization: lead.organization,
           type: "chat",
@@ -316,7 +408,6 @@ export const initBaileys = async (io, userId) => {
           phone: from,
           status: isFromMe ? "sent" : "received",
           source: "baileys",
-          metaMessageId: messageId,
           waUserId: userId,
           mediaUrl,
           mediaName,
@@ -324,16 +415,34 @@ export const initBaileys = async (io, userId) => {
           waMessageRaw: { key: msg.key, message: msg.message },
           replyTo,
           // Phone se seedha bheja gaya message — CRM user ne nahi bheja, isliye sentBy null rahega
-        });
+        };
 
-        const populatedSaved = await WhatsappMessage.findById(saved._id)
-          .populate("sentBy", "name email")
-          .populate({
-            path: "replyTo",
-            select: "body direction type callType mediaName createdAt sentBy",
-            populate: { path: "sentBy", select: "name email" },
-          })
-          .lean();
+        let saved;
+        if (messageId) {
+          insertFields.metaMessageId = messageId;
+          saved = await WhatsappMessage.findOneAndUpdate(
+            { metaMessageId: messageId },
+            { $setOnInsert: insertFields },
+            { upsert: true, new: true, setDefaultsOnInsert: true },
+          ).lean();
+        } else {
+          saved = await WhatsappMessage.create(insertFields);
+        }
+        const populatedSaved = saved._id
+          ? await WhatsappMessage.findById(saved._id)
+              .populate("sentBy", "name email")
+              .populate("waUserId", "name email")
+              .populate({
+                path: "replyTo",
+                select: "body direction type callType mediaName createdAt sentBy waUserId",
+                populate: [
+                  { path: "sentBy", select: "name email" },
+                  { path: "waUserId", select: "name email" },
+                ],
+              })
+              .lean()
+          : // already-lean doc returned from duplicate branch
+            saved;
 
         io.to(`lead_${lead._id}`).emit("wa-new-message", populatedSaved);
         if (!isFromMe) {
@@ -382,10 +491,7 @@ export const initBaileys = async (io, userId) => {
           .then((lead) => {
   
   if (!lead) return;
-  const roomName = `lead_${lead._id}`;
-  const roomSize = io.sockets.adapter.rooms.get(roomName)?.size || 0;
-  
-  io.to(roomName).emit("wa-typing", {
+  io.emit("wa-typing", {
     leadId: lead._id.toString(),
     state: lastKnown,
   });
@@ -414,6 +520,7 @@ export const initBaileys = async (io, userId) => {
     });
 
     sock.ev.on("call", async (calls) => {
+      logger.info?.(`[Call Event] Received ${calls.length} call event(s): ${JSON.stringify(calls)}`);
       for (const call of calls) {
         const { id: callId, from, status, isVideo, isGroup } = call;
         if (isGroup) continue;
@@ -460,7 +567,10 @@ export const initBaileys = async (io, userId) => {
           phone: { $regex: `${last10}$` },
         }).lean();
 
-        if (!lead) continue;
+        if (!lead) {
+          logger.warn?.(`[Call Event] No lead found for resolved number: ${resolvedNumber}`);
+          continue;
+        }
 
         const saved = await WhatsappMessage.create({
           leadId: lead._id,
@@ -509,9 +619,21 @@ export const getBaileysStatus = (userId) => {
 export const logoutBaileysSession = async (userId) => {
   const session = sessions.get(userId);
   if (!session?.sock) {
-    throw new Error("WhatsApp session is not active");
+    await deleteMongoAuthState(userId).catch(() => {});
+    if (session) {
+      session.sock = null;
+      session.isConnected = false;
+      session.currentQR = null;
+    }
+    return;
   }
-  await session.sock.logout();
+
+  try {
+    await session.sock.logout();
+  } catch (error) {
+    await deleteMongoAuthState(userId).catch(() => {});
+    throw error;
+  }
 };
 
 export const sendBaileysMedia = async (userId, phone, filePath, fileName, mimetype, caption = "", quotedRaw = null) => {
