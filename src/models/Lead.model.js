@@ -61,6 +61,10 @@ const leadSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    statusChangedAt: {        
+  type: Date,
+  default: Date.now,
+},
     recordingsDeletedAt: {
       type: Date,
       default: null,
