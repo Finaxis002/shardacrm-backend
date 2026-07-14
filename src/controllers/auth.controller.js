@@ -210,15 +210,15 @@ export const login = asyncHandler(async (req, res) => {
     "+password",
   );
 
- if (!user) {
-  throw new ApiError(401, "No account found with this email"); 
-}
+  if (!user) {
+    throw new ApiError(401, "No account found with this email");
+  }
 
-const isPasswordValid = await user.comparePassword(password);
+  const isPasswordValid = await user.comparePassword(password);
 
-if (!isPasswordValid) {
-  throw new ApiError(401, "Incorrect password. Please try again"); 
-}
+  if (!isPasswordValid) {
+    throw new ApiError(401, "Incorrect password. Please try again");
+  }
 
   const { accessToken, refreshToken } = await generateTokens(user._id);
 
@@ -237,7 +237,7 @@ if (!isPasswordValid) {
     .json(
       new ApiResponse(
         200,
-        { user: user.toJSON(), accessToken },
+        { user: user.toJSON(), accessToken, refreshToken },
         "User logged in successfully",
       ),
     );
@@ -259,7 +259,7 @@ export const refreshToken = asyncHandler(async (req, res) => {
     .json(
       new ApiResponse(
         200,
-        { accessToken },
+        { accessToken, refreshToken },
         "Access token refreshed successfully",
       ),
     );
