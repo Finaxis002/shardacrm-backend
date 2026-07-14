@@ -1284,6 +1284,7 @@ export const updateLead = asyncHandler(async (req, res) => {
   // Sirf tab jab status actually change hua ho
   if (oldStatus !== lead.status) {
     lead.closedAt = lead.status === "Closed" ? new Date() : null;
+    lead.statusChangedAt = new Date(); 
     await lead.save();
   }
   if (oldStatus !== lead.status) {
@@ -1789,6 +1790,7 @@ export const updateLeadStatus = asyncHandler(async (req, res) => {
 
   lead.status = status;
   lead.closedAt = status === "Closed" ? new Date() : null;
+  lead.statusChangedAt = new Date();
   await lead.save();
 
   await Activity.create({
@@ -2233,7 +2235,7 @@ export const bulkUpdateStatus = asyncHandler(async (req, res) => {
 
   await Lead.updateMany(
     { _id: { $in: ids }, organization },
-    { $set: { status, closedAt: status === "Closed" ? new Date() : null } },
+    { $set: { status, closedAt: status === "Closed" ? new Date() : null, statusChangedAt: new Date() } },
   );
 
   const activities = ids.map((leadId) => ({
