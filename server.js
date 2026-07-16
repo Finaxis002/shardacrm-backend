@@ -31,6 +31,14 @@ io.on("connection", (socket) => {
     socket.join(`lead_${leadId}`);
   });
 
+  // Non-lead WhatsApp conversations ke liye — backend inhe `wa_<last10digits>`
+  // room mein emit karta hai (whatsapp.baileys.service.js dekho), isliye
+  // frontend ko bhi wahi room join karna padega taaki live messages milein.
+  socket.on("join-wa-room", (phone) => {
+    const last10 = String(phone || "").replace(/\D/g, "").slice(-10);
+    if (last10) socket.join(`wa_${last10}`);
+  });
+
   socket.on("join-user-room", (userId) => {
     socket.join(`user_${userId}`);
      logger.info(`Socket ${socket.id} joined room: user_${userId}`);
@@ -67,9 +75,16 @@ server.listen(PORT, () => {
 
 // Handle unhandled promise rejections
 process.on("unhandledRejection", (err) => {
-  logger.error(`Unhandled Rejection: ${err.message}`);
-  process.exit(1);
+  logger.error(`Unhandled Rejection: ${err.message}`, { stack: err.stack });
+  // Server ko crash mat karo transient errors (jaise Google Sheets API "Connection Closed") ke liye.
+  // Sirf log karo taaki sync/cron jobs ka ek fail hua request pura server na gira de.
 });
+
+// Handle uncaught exceptions bhi isi tarah safely log karo
+process.on("uncaughtException", (err) => {
+  logger.error(`Uncaught Exception: ${err.message}`, { stack: err.stack });
+});
+
 
 // Handle SIGTERM
 process.on("SIGTERM", () => {

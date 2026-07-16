@@ -2,6 +2,7 @@ import { Router } from "express";
 import { verifyJWT } from "../middleware/auth.middleware.js";
 import { uploadWhatsappMedia } from "../middleware/whatsappUpload.middleware.js";
 import { getConversations } from "../controllers/whatsappInbox.controller.js";
+import { getAgentsList } from "../controllers/whatsapp.controller.js";
 import {
   getWhatsAppMessages,
   sendWhatsAppMessage,
@@ -38,4 +39,5 @@ router.get("/webhook", verifyWebhook);
 router.post("/webhook", receiveWebhook);
 router.get("/status/bulk", verifyJWT, getBulkWhatsAppStatus);
 router.get("/conversations", verifyJWT, getConversations);
+router.get("/agents", verifyJWT, getAgentsList);
 export default router;
