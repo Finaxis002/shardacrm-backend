@@ -64,6 +64,12 @@ const userSchema = new mongoose.Schema(
       select: false,
     },
 
+    // ── WhatsApp (Baileys) ka last successful message-history sync ────────
+    waLastSyncedAt: {
+      type: Date,
+      default: null,
+    },
+
     // ── Google Calendar (per-user connection) ─────────────────────────────
     gcalConnected: {
       type: Boolean,

@@ -100,11 +100,33 @@ const whatsappMessageSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    isGroup: {
+      type: Boolean,
+      default: false,
+    },
+    groupJid: {
+      type: String,
+      default: null,
+    },
+    groupSubject: {
+      type: String,
+      default: "",
+    },
+    // Group ke andar asli sender kaun tha (group ka phone/leadId to sab members ka common hota hai)
+    senderPhone: {
+      type: String,
+      default: null,
+    },
+    senderName: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true },
 );
 // fast query for lead timeline
 whatsappMessageSchema.index({ leadId: 1, createdAt: -1 });
+whatsappMessageSchema.index({ isGroup: 1, groupJid: 1, createdAt: -1 });
 // prevent duplicate messages when multiple sockets/processes handle the same upstream event
 // `sparse: true` allows documents without metaMessageId to exist
 whatsappMessageSchema.index({ metaMessageId: 1 }, { unique: true, sparse: true });
