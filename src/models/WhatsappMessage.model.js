@@ -5,7 +5,7 @@ const whatsappMessageSchema = new mongoose.Schema(
     leadId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Lead",
-      required: true,
+      default: null,
     },
     organization: {
       type: mongoose.Schema.Types.ObjectId,
