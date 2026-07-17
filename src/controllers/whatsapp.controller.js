@@ -260,15 +260,19 @@ export const deleteWhatsAppMessage = asyncHandler(async (req, res) => {
 });
 
 export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
-  const { leadId, phone: rawPhone, message, replyToId, sendAsUserId } = req.body;
-  if ((!leadId && !rawPhone) || !message?.trim()) {
-    throw new ApiError(400, "leadId or phone, and message are required");
+  const { leadId, phone: rawPhone, groupJid, message, replyToId, sendAsUserId } = req.body;
+  if ((!leadId && !rawPhone && !groupJid) || !message?.trim()) {
+    throw new ApiError(400, "leadId, phone, or groupJid, and message are required");
   }
 
   let lead = null;
   let recipient = null;
+  let recipientJid = null;
 
-  if (leadId) {
+  if (groupJid) {
+    recipientJid = String(groupJid);
+    recipient = recipientJid;
+  } else if (leadId) {
     lead = await Lead.findById(leadId);
     if (!lead) {
       throw new ApiError(404, "Lead not found");
@@ -304,7 +308,7 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
         quotedRaw = replyToMsg?.waMessageRaw || null;
       }
 
-      const waResult = await sendBaileysMessage(userId, recipient, trimmedMessage, quotedRaw);
+      const waResult = await sendBaileysMessage(userId, recipientJid || recipient, trimmedMessage, quotedRaw);
       const waMessageId = waResult?.key?.id || "";
 
       // Atomic upsert — agar Baileys ka apna self-echo event pehle hi ek record bana chuka ho
@@ -319,11 +323,14 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
             type: "chat",
             direction: "outgoing",
             body: trimmedMessage,
-            phone: recipient,
+            phone: recipientJid || recipient,
             source: "baileys",
             metaMessageId: waMessageId,
             replyTo: replyToId || null,
             waMessageRaw: { key: waResult?.key, message: waResult?.message },
+            isGroup: Boolean(groupJid),
+            groupJid: groupJid || null,
+            groupSubject: groupJid ? "" : "",
           },
           $set: {
             status: "sent",
@@ -439,13 +446,15 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
     type: "chat",
     direction: "outgoing",
     body: trimmedMessage,
-    phone: recipient,
+    phone: recipientJid || recipient,
     status: "sent",
     source: "cloud_api",
     metaMessageId,
     sentBy: req.user?._id || null,
     metaResponse: cloudResponse,
     replyTo: replyToId || null,
+    isGroup: Boolean(groupJid),
+    groupJid: groupJid || null,
   });
 
   const populatedMessage = await WhatsappMessage.findById(savedMessage._id)

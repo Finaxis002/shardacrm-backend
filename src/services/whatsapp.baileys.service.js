@@ -37,6 +37,31 @@ const shouldSuppress = (args) => {
   return NOISY_PATTERNS.some((p) => text.includes(p));
 };
 
+const installBaileysNoiseFilter = () => {
+  if (globalThis.__baileysNoiseFilterInstalled) return;
+
+  const originalConsoleError = console.error.bind(console);
+  const originalConsoleWarn = console.warn.bind(console);
+  const originalConsoleInfo = console.info.bind(console);
+
+  console.error = (...args) => {
+    if (shouldSuppress(args)) return;
+    originalConsoleError(...args);
+  };
+  console.warn = (...args) => {
+    if (shouldSuppress(args)) return;
+    originalConsoleWarn(...args);
+  };
+  console.info = (...args) => {
+    if (shouldSuppress(args)) return;
+    originalConsoleInfo(...args);
+  };
+
+  globalThis.__baileysNoiseFilterInstalled = true;
+};
+
+installBaileysNoiseFilter();
+
 /* ── Status ko sirf upgrade hone do, downgrade (race condition) mat hone do ── */
 const STATUS_RANK = { sent: 1, delivered: 2, read: 3 };
 
@@ -514,12 +539,44 @@ export const initBaileys = async (io, userId) => {
   if (!userId) throw new Error("userId is required to init a WhatsApp session");
 
   const session = getSession(userId);
-  if (session.isInitializing) return;
+  if (session.isInitializing) {
+    logger.warn?.(`[Baileys] initBaileys called for ${userId} but already initializing, skipping`);
+    return;
+  }
+  // Agar socket already bana hua hai aur connect hone ka wait kar raha hai
+  // (QR scan ka intezaar), to naya socket mat banao — warna purana
+  // pairing session beech mein hi tootkar QR kabhi stabilize nahi hota.
+  if (session.sock && !session.isConnected) {
+    logger.warn?.(`[Baileys] initBaileys called for ${userId} but a socket is already pending connection, skipping`);
+    return;
+  }
   session.isInitializing = true;
 
+  // Safety net — agar kisi wajah se init 30 sec me complete/fail na ho
+  // (network hang, Mongo query atak jaaye), to flag ko forcefully reset karo
+  // taaki agla connect attempt permanently blocked na rahe.
+  const initTimeoutGuard = setTimeout(() => {
+    if (session.isInitializing) {
+      logger.error?.(`[Baileys] Init timed out after 30s for user ${userId}, resetting isInitializing flag`);
+      session.isInitializing = false;
+      io.to(`user_${userId}`).emit("wa-connect-error", {
+        message: "WhatsApp connection timed out. Please try again.",
+      });
+    }
+  }, 30000);
+
   try {
-    const { state, saveCreds } = await useMongoAuthState(userId);
+    logger.info?.(`[Baileys] Starting init for user ${userId}`);
+    let { state, saveCreds } = await useMongoAuthState(userId);
+    if (!state?.creds?.noiseKey) {
+      logger.warn?.(`[Baileys] Corrupt/incomplete creds detected for user ${userId}, wiping and starting fresh`);
+      await deleteMongoAuthState(userId).catch(() => {});
+      ({ state, saveCreds } = await useMongoAuthState(userId));
+    }
+
+    logger.info?.(`[Baileys] Auth state loaded for user ${userId}`);
     const { version } = await fetchLatestBaileysVersion();
+    logger.info?.(`[Baileys] Baileys version fetched for user ${userId}: ${version}`);
 
     const sock = makeWASocket({
       auth: {
@@ -846,7 +903,10 @@ export const initBaileys = async (io, userId) => {
     session.isInitializing = false;
   } catch (err) {
     session.isInitializing = false;
-    
+    console.error(`[Baileys] initBaileys failed for user ${userId}:`, err?.message || err);
+    io.to(`user_${userId}`).emit("wa-connect-error", {
+      message: err?.message || "Failed to initialize WhatsApp connection",
+    });
   }
 };
 
@@ -855,7 +915,12 @@ export const sendBaileysMessage = async (userId, phone, text, quotedRaw = null) 
   if (!session?.sock || !session.isConnected) {
     throw new Error("Baileys not connected");
   }
-  const jid = `${phone}@s.whatsapp.net`;
+
+  const rawRecipient = String(phone || "");
+  const jid = rawRecipient.includes("@")
+    ? rawRecipient
+    : `${rawRecipient}@s.whatsapp.net`;
+
   await session.sock.presenceSubscribe(jid).catch(() => {});
   const options = quotedRaw ? { quoted: quotedRaw } : undefined;
 
