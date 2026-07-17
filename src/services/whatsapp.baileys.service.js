@@ -101,6 +101,9 @@ const updateMessageStatusSafely = async (messageId, newStatus, io) => {
 /* ── Har user ke liye alag session store ── */
 const sessions = new Map(); // Map<userId, { sock, currentQR, isConnected, isInitializing, activeCalls }>
 
+const pendingLidMessages = [];
+const MAX_LID_PENDING_AGE_MS = 6 * 60 * 60 * 1000; // 6 ghante ke baad hi finally drop karo
+
 const getSession = (userId) => {
   if (!sessions.has(userId)) {
     sessions.set(userId, {
@@ -235,7 +238,15 @@ const upsertWhatsappContact = async (io, sock, session, userId, jid, waName) => 
     if (!organization) return;
 
     const updateFields = {};
-    if (waName) updateFields.waName = waName;
+    if (waName) {
+      // Agar contact ka naam already saved-name se set ho chuka hai, to
+      // baad me aane wala pushName (jo sirf username hota hai) usse
+      // overwrite na kare — sirf tab update karo jab koi naam pehle se na ho.
+      const existingContact = await WhatsappContact.findOne({ organization, phone: last10 }).select("waName waNameIsSaved").lean();
+      if (!existingContact?.waNameIsSaved) {
+        updateFields.waName = waName;
+      }
+    }
 
     const cacheKey = `${organization}:${last10}`;
     const cached = session.profilePicCache?.get(cacheKey);
@@ -304,7 +315,7 @@ const getGroupSubject = async (sock, session, groupJid) => {
  * ke baad backfill) dono jagah se use hoga, taaki koi bhi message miss na ho
  * chahe woh CRM se bheja gaya ho ya phone se seedha.
  */
-const processIncomingMessage = async (sock, session, io, userId, msg) => {
+const processIncomingMessage = async (sock, session, io, userId, msg, pendingSince = null) => {
   const msgIdShort = msg?.key?.id || "no-id";
   if (!msg.message) {
     logger.info(`[SYNC SKIP] ${msgIdShort} — empty message payload`);
@@ -343,12 +354,23 @@ const processIncomingMessage = async (sock, session, io, userId, msg) => {
   } else if (remoteJid.endsWith("@lid")) {
     const resolved = await resolveLidToPhone(sock, remoteJid, session, 5, 1500, msg.key);
     if (!resolved) {
-      logger.info(`[SYNC SKIP] ${msgIdShort} — LID ${remoteJid} could not resolve to phone number`);
-      logger.warn?.(`Could not resolve LID ${remoteJid} to phone number after retries, skipping message`);
-      return;
+      // Turant pseudo-thread banane ke bajaye retry queue mein daalo
+      // (30s interval, 6h tak) — false-duplicate "lid_..." threads
+      // banna band ho jayega.
+      const firstSeenAt = pendingSince ?? Date.now();
+      if (Date.now() - firstSeenAt < MAX_LID_PENDING_AGE_MS) {
+        pendingLidMessages.push({ msg, io, userId, firstSeenAt });
+        logger.warn?.(`[LID] Could not resolve ${remoteJid}, queued for retry (age=${Date.now() - firstSeenAt}ms)`);
+        return;
+      }
+      // 6 ghante ke baad bhi resolve nahi hua — tabhi pseudo-identity use karo
+      const lidPseudoId = remoteJid.split("@")[0];
+      logger.warn?.(`[LID] Could not resolve ${remoteJid} after 6h of retries — saving under pseudo-identity lid_${lidPseudoId}`);
+      from = `lid_${lidPseudoId}`;
+    } else {
+      from = resolved;
+      session.lidPnCache.set(remoteJid, resolved);
     }
-    from = resolved;
-    session.lidPnCache.set(remoteJid, resolved);
   }
 
   if (!from) {
@@ -405,11 +427,12 @@ const processIncomingMessage = async (sock, session, io, userId, msg) => {
     }
   }
 
+  const isUnresolvedLid = from.startsWith("lid_");
   const last10 = from.slice(-10);
 
-  // ── Groups ka koi Lead nahi hota — is check ko skip karo, warna group-id ke
-  //    last 10 digits kisi random Lead ke phone se galti se match ho sakte hain ──
-  const lead = isGroup
+  // ── Groups ka koi Lead nahi hota, aur unresolved-LID pseudo-ID bhi kisi
+  //    real phone se match nahi karwana — warna galat Lead se link ho sakta hai ──
+  const lead = isGroup || isUnresolvedLid
     ? null
     : await Lead.findOne({
         phone: { $regex: `${last10}$` },
@@ -482,11 +505,7 @@ const processIncomingMessage = async (sock, session, io, userId, msg) => {
   }
 
   const actualMessageTime = parseBaileysTimestamp(msg.messageTimestamp);
-  logger.info(
-    `[TS DEBUG] ${msgIdShort} raw=`, JSON.stringify(msg.messageTimestamp),
-    `typeof=${typeof msg.messageTimestamp}`,
-    `resolved=${actualMessageTime.toISOString()}`,
-  );
+  
 
   const insertFields = {
     leadId: lead?._id || null,
@@ -535,6 +554,42 @@ const processIncomingMessage = async (sock, session, io, userId, msg) => {
     io.emit("wa-unread-new", { leadId: emitLeadId, phone: last10 });
   }
 };
+
+/**
+ * Har 30 sec me pending LID messages ko dobara resolve karne ki koshish
+ * karta hai. Agar resolve ho jaye to processIncomingMessage khud message
+ * save/emit kar dega. Agar socket abhi bhi connected nahi hai ya resolve
+ * nahi hua, to entry wapas queue me chali jaati hai agli baar ke liye —
+ * 6 ghante tak, uske baad permanently drop.
+ */
+const retryPendingLidMessages = async () => {
+  if (pendingLidMessages.length === 0) return;
+  const batch = pendingLidMessages.splice(0, pendingLidMessages.length);
+  const now = Date.now();
+  logger.info?.(`[LID Retry] Retrying ${batch.length} pending message(s)`);
+
+  for (const entry of batch) {
+    if (now - entry.firstSeenAt > MAX_LID_PENDING_AGE_MS) {
+      logger.warn?.(`[LID Retry] Dropping message ${entry.msg?.key?.id || "unknown"} after 6h — LID never resolved`);
+      continue;
+    }
+    const currentSession = sessions.get(entry.userId);
+    const currentSock = currentSession?.sock;
+    if (!currentSock || !currentSession?.isConnected) {
+      pendingLidMessages.push(entry); // socket abhi ready nahi, agli baar try karo
+      continue;
+    }
+    try {
+      await processIncomingMessage(currentSock, currentSession, entry.io, entry.userId, entry.msg, entry.firstSeenAt);
+    } catch (err) {
+      logger.error?.(`[LID Retry] error reprocessing message: ${err.message}`);
+      pendingLidMessages.push(entry); // wapas try karne ke liye rakh do
+    }
+  }
+};
+
+setInterval(retryPendingLidMessages, 30000);
+
 export const initBaileys = async (io, userId) => {
   if (!userId) throw new Error("userId is required to init a WhatsApp session");
 
@@ -670,7 +725,7 @@ export const initBaileys = async (io, userId) => {
       // ── Contacts backfill: naam + profile picture — sabke liye, purane/naye sabko chahiye ──
       if (Array.isArray(contacts) && contacts.length > 0) {
         for (const contact of contacts) {
-          const waName = contact.notify || contact.name || contact.verifiedName || "";
+          const waName = contact.name || contact.notify || contact.verifiedName || "";
           upsertWhatsappContact(io, sock, session, userId, contact.id, waName).catch(() => {});
         }
       }
@@ -732,14 +787,14 @@ export const initBaileys = async (io, userId) => {
     /* ── Naam/DP baad mein bhi update hote rehte hain — realtime capture karo ── */
     sock.ev.on("contacts.upsert", (contacts) => {
       for (const contact of contacts) {
-        const waName = contact.notify || contact.name || contact.verifiedName || "";
+        const waName = contact.name || contact.notify || contact.verifiedName || "";
         upsertWhatsappContact(io, sock, session, userId, contact.id, waName).catch(() => {});
       }
     });
 
     sock.ev.on("contacts.update", (updates) => {
       for (const update of updates) {
-        const waName = update.notify || update.name || update.verifiedName || "";
+        const waName = update.name || update.notify || update.verifiedName || "";
         upsertWhatsappContact(io, sock, session, userId, update.id, waName).catch(() => {});
       }
     });

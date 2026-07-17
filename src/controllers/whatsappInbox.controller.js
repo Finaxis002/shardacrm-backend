@@ -132,7 +132,7 @@ export const getConversations = asyncHandler(async (req, res) => {
       leadId: lead?._id || null,
       phone: group._id,
       isGroup: false,
-      name: waContact?.waName || lead?.name || group._id,
+      name: lead?.name || waContact?.waName || group._id,
       profilePicUrl: waContact?.profilePicUrl || "",
       owner: lead?.assignedTo ? { id: lead.assignedTo._id, name: lead.assignedTo.name } : null,
       coAssignees: Array.isArray(lead?.coAssignees)
