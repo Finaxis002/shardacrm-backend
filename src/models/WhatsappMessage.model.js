@@ -46,9 +46,8 @@ const whatsappMessageSchema = new mongoose.Schema(
       default: "cloud_api",
     },
     metaMessageId: {
-      type: String,
-      default: "",
-    },
+  type: String,
+},
     mediaUrl: {
       type: String,
       default: "",

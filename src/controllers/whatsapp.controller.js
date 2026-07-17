@@ -309,37 +309,56 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
       }
 
       const waResult = await sendBaileysMessage(userId, recipientJid || recipient, trimmedMessage, quotedRaw);
-      const waMessageId = waResult?.key?.id || "";
-
-      // Atomic upsert — agar Baileys ka apna self-echo event pehle hi ek record bana chuka ho
-      // (metaMessageId match karke), to yahan sirf sentBy/status update ho jayega, duplicate nahi banega.
+      const waMessageId = waResult?.key?.id || null;
       const organization = lead?.organization || req.user?.organization;
-      const savedMessage = await WhatsappMessage.findOneAndUpdate(
-        { metaMessageId: waMessageId },
-        {
-          $setOnInsert: {
-            leadId: lead?._id || null,
-            organization,
-            type: "chat",
-            direction: "outgoing",
-            body: trimmedMessage,
-            phone: recipientJid || recipient,
-            source: "baileys",
-            metaMessageId: waMessageId,
-            replyTo: replyToId || null,
-            waMessageRaw: { key: waResult?.key, message: waResult?.message },
-            isGroup: Boolean(groupJid),
-            groupJid: groupJid || null,
-            groupSubject: groupJid ? "" : "",
+
+      let savedMessage;
+      if (waMessageId) {
+        savedMessage = await WhatsappMessage.findOneAndUpdate(
+          { metaMessageId: waMessageId },
+          {
+            $setOnInsert: {
+              leadId: lead?._id || null,
+              organization,
+              type: "chat",
+              direction: "outgoing",
+              body: trimmedMessage,
+              phone: recipientJid || recipient,
+              source: "baileys",
+              metaMessageId: waMessageId,
+              replyTo: replyToId || null,
+              waMessageRaw: { key: waResult?.key, message: waResult?.message },
+              isGroup: Boolean(groupJid),
+              groupJid: groupJid || null,
+              groupSubject: groupJid ? "" : "",
+            },
+            $set: {
+              status: "sent",
+              sentBy: sendAsUserId || req.user?._id || null,
+              waUserId: userId,
+            },
           },
-          $set: {
-            status: "sent",
-            sentBy: sendAsUserId || req.user?._id || null,
-            waUserId: userId,
-          },
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
-      );
+          { upsert: true, new: true, setDefaultsOnInsert: true },
+        );
+      } else {
+        logger.warn?.(`[sendWhatsAppMessage] No key.id from Baileys for ${recipientJid || recipient}`);
+        savedMessage = await WhatsappMessage.create({
+          leadId: lead?._id || null,
+          organization,
+          type: "chat",
+          direction: "outgoing",
+          body: trimmedMessage,
+          phone: recipientJid || recipient,
+          source: "baileys",
+          status: "sent",
+          sentBy: sendAsUserId || req.user?._id || null,
+          waUserId: userId,
+          replyTo: replyToId || null,
+          waMessageRaw: { key: waResult?.key, message: waResult?.message },
+          isGroup: Boolean(groupJid),
+          groupJid: groupJid || null,
+        });
+      }
 
       const populatedMessage = await WhatsappMessage.findById(savedMessage._id)
         .populate("sentBy", "name email")
@@ -421,7 +440,6 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
         status: "failed",
         fallback: true,
         source: "cloud_api",
-        metaMessageId: "",
         sentBy: req.user?._id || null,
         metaResponse: err.response?.data || { error: externalMessage },
       });
@@ -438,7 +456,7 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
     throw new ApiError(invalidTokenError ? 500 : externalStatus, errorMessage);
   }
 
-  const metaMessageId = cloudResponse.messages?.[0]?.id || "";
+  const metaMessageId = cloudResponse.messages?.[0]?.id || null;
 
   const savedMessage = await WhatsappMessage.create({
     leadId: lead._id,
@@ -449,7 +467,7 @@ export const sendWhatsAppMessage = asyncHandler(async (req, res) => {
     phone: recipientJid || recipient,
     status: "sent",
     source: "cloud_api",
-    metaMessageId,
+    ...(metaMessageId ? { metaMessageId } : {}),
     sentBy: req.user?._id || null,
     metaResponse: cloudResponse,
     replyTo: replyToId || null,
@@ -522,35 +540,57 @@ export const sendWhatsAppMedia = asyncHandler(async (req, res) => {
       }
 
       const waResult = await sendBaileysMedia(userId, recipient, file.path, file.originalname, file.mimetype, trimmedCaption, quotedRaw);
-      const waMessageId = waResult?.key?.id || "";
-
+      const waMessageId = waResult?.key?.id || null;
       const organization = lead?.organization || req.user?.organization;
-      const savedMessage = await WhatsappMessage.findOneAndUpdate(
-        { metaMessageId: waMessageId },
-        {
-          $setOnInsert: {
-            leadId: lead?._id || null,
-            organization,
-            type: "chat",
-            direction: "outgoing",
-            body: trimmedCaption,
-            phone: recipient,
-            source: "baileys",
-            metaMessageId: waMessageId,
-            mediaUrl: relativeUrl,
-            mediaName: file.originalname,
-            isVoiceNote,
-            replyTo: replyToId || null,
-            waMessageRaw: { key: waResult?.key, message: waResult?.message },
+
+      let savedMessage;
+      if (waMessageId) {
+        savedMessage = await WhatsappMessage.findOneAndUpdate(
+          { metaMessageId: waMessageId },
+          {
+            $setOnInsert: {
+              leadId: lead?._id || null,
+              organization,
+              type: "chat",
+              direction: "outgoing",
+              body: trimmedCaption,
+              phone: recipient,
+              source: "baileys",
+              metaMessageId: waMessageId,
+              mediaUrl: relativeUrl,
+              mediaName: file.originalname,
+              isVoiceNote,
+              replyTo: replyToId || null,
+              waMessageRaw: { key: waResult?.key, message: waResult?.message },
+            },
+            $set: {
+              status: "sent",
+              sentBy: sendAsUserId || req.user?._id || null,
+              waUserId: userId,
+            },
           },
-          $set: {
-            status: "sent",
-            sentBy: sendAsUserId || req.user?._id || null,
-            waUserId: userId,
-          },
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
-      );
+          { upsert: true, new: true, setDefaultsOnInsert: true },
+        );
+      } else {
+        logger.warn?.(`[sendWhatsAppMedia] No key.id from Baileys for ${recipient}`);
+        savedMessage = await WhatsappMessage.create({
+          leadId: lead?._id || null,
+          organization,
+          type: "chat",
+          direction: "outgoing",
+          body: trimmedCaption,
+          phone: recipient,
+          source: "baileys",
+          status: "sent",
+          sentBy: sendAsUserId || req.user?._id || null,
+          waUserId: userId,
+          mediaUrl: relativeUrl,
+          mediaName: file.originalname,
+          isVoiceNote,
+          replyTo: replyToId || null,
+          waMessageRaw: { key: waResult?.key, message: waResult?.message },
+        });
+      }
 
       const populatedMessage = await WhatsappMessage.findById(savedMessage._id)
         .populate("sentBy", "name email")
@@ -597,7 +637,7 @@ export const sendWhatsAppMedia = asyncHandler(async (req, res) => {
     throw new ApiError(err.response?.status || 500, externalMessage);
   }
 
-  const metaMessageId = cloudResponse.messages?.[0]?.id || "";
+  const metaMessageId = cloudResponse.messages?.[0]?.id || null;
 
   const savedMessage = await WhatsappMessage.create({
     leadId: lead._id,
@@ -608,7 +648,7 @@ export const sendWhatsAppMedia = asyncHandler(async (req, res) => {
     phone: recipient,
     status: "sent",
     source: "cloud_api",
-    metaMessageId,
+    ...(metaMessageId ? { metaMessageId } : {}),
     sentBy: req.user?._id || null,
     metaResponse: cloudResponse,
     mediaUrl: relativeUrl,
