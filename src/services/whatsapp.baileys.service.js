@@ -660,7 +660,6 @@ export const initBaileys = async (io, userId) => {
       if (connection === "open") {
         session.isConnected = true;
         session.currentQR = null;
-        session.reconnectAttempts = 0;
           session.accountName = sock.user?.name || sock.user?.verifiedName || null;
           // store account jid/phone for quick access
           try {
@@ -680,12 +679,7 @@ export const initBaileys = async (io, userId) => {
         session.isConnected = false;
         session.isInitializing = false;
         const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-
-        session.reconnectAttempts = (session.reconnectAttempts || 0) + 1;
-        logger.warn?.(
-          `[Baileys] Connection closed for user ${userId} — statusCode=${reason}, attempt #${session.reconnectAttempts}`,
-        );
-
+        
         sock?.ev?.removeAllListeners();
         session.sock = null;
         io.emit("wa-agent-status", { userId, isConnected: false });
@@ -695,9 +689,7 @@ export const initBaileys = async (io, userId) => {
         // cycle apne aap sahi "syncing"/"done" bhej dega.
 
         if (reason !== DisconnectReason.loggedOut) {
-          const backoffMs = Math.min(3000 * Math.pow(2, session.reconnectAttempts - 1), 60000);
-          logger.warn?.(`[Baileys] Reconnecting user ${userId} in ${backoffMs}ms`);
-          setTimeout(() => initBaileys(io, userId), backoffMs);
+          setTimeout(() => initBaileys(io, userId), 3000);
         } else {
           session.currentQR = null;
           session.isConnected = false;
