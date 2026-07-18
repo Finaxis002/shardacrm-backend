@@ -104,9 +104,9 @@ const buildTaskGcalResource = async (activity, lead) => {
   if (!activity.taskDueDate) return null;
 
   const dueDate = new Date(activity.taskDueDate);
-  const dateStr = dueDate.toISOString().split("T")[0];
-  const timeStr = "10:00";
-  const startDateTime = new Date(`${dateStr}T${timeStr}:00`);
+  if (Number.isNaN(dueDate.getTime())) return null;
+
+  const startDateTime = dueDate;
   const endDateTime = new Date(startDateTime.getTime() + 60 * 60 * 1000);
 
   const eventTitle = `Task: ${activity.text || lead?.name || "Lead task"}`;
