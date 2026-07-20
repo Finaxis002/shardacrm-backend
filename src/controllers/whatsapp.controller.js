@@ -562,6 +562,8 @@ export const sendWhatsAppMedia = asyncHandler(async (req, res) => {
               isVoiceNote,
               replyTo: replyToId || null,
               waMessageRaw: { key: waResult?.key, message: waResult?.message },
+              leadId: lead?._id || req.body.leadId || null, 
+      organization: organization || req.user.organization,
             },
             $set: {
               status: "sent",

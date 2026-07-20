@@ -1,9 +1,10 @@
 import { initAuthCreds } from "@whiskeysockets/baileys/lib/Utils/auth-utils.js";
 import { BufferJSON } from "@whiskeysockets/baileys/lib/Utils/generics.js";
 import WhatsAppSession from "../models/WhatsAppSession.model.js";
+import WhatsAppSignalKey from "../models/WhatsAppSignalKey.model.js";
 
-/* ── Per-user write queue — taaki concurrent get/set/clear calls ek dusre ko
-     overwrite na karein (race condition hi "Bad MAC" / session corruption ki asli wajah hai) ── */
+/* ── creds ke liye per-user write queue — taaki concurrent saveCreds() calls
+     ek dusre ko overwrite na karein ── */
 const userQueues = new Map();
 
 const enqueue = (userId, task) => {
@@ -45,56 +46,62 @@ const upsertSessionDoc = async (userId, update) => {
   );
 };
 
+/* ── Signal keys ab yahan store hote hain — ek document per (userId, category, keyId).
+     Na poora keys object padhna padta hai, na poora wapas likhna — sirf jo IDs
+     chahiye/change hui hain unhi par query/write hoti hai. ── */
 const buildSignalKeyStore = (userId) => ({
   async get(type, ids) {
-    return enqueue(userId, async () => {
-      const doc = await getSessionDoc(userId);
-      const stored = doc?.keys?.[type] || {};
-      const result = {};
+    const docs = await WhatsAppSignalKey.find({
+      userId,
+      category: type,
+      keyId: { $in: ids },
+    }).lean();
 
-      for (const id of ids) {
-        const entry = stored[id];
-        if (entry) {
-          result[id] = restoreValue(entry);
-        }
-      }
-
-      return result;
-    });
+    const result = {};
+    for (const doc of docs) {
+      result[doc.keyId] = restoreValue(doc.value);
+    }
+    return result;
   },
+
   async set(data) {
-    return enqueue(userId, async () => {
-      const currentDoc = await getSessionDoc(userId);
-      const existingKeys = currentDoc?.keys || {};
-      const nextKeys = { ...existingKeys };
+    const ops = [];
 
-      for (const category in data) {
-        const payload = data[category] || {};
-        nextKeys[category] = { ...(nextKeys[category] || {}) };
-
-        for (const id in payload) {
-          const value = payload[id];
-          if (value) {
-            nextKeys[category][id] = normalizeValue(value);
-          } else {
-            delete nextKeys[category][id];
-          }
+    for (const category in data) {
+      const payload = data[category] || {};
+      for (const id in payload) {
+        const value = payload[id];
+        if (value) {
+          ops.push({
+            updateOne: {
+              filter: { userId, category, keyId: id },
+              update: { $set: { value: normalizeValue(value) } },
+              upsert: true,
+            },
+          });
+        } else {
+          ops.push({
+            deleteOne: { filter: { userId, category, keyId: id } },
+          });
         }
       }
+    }
 
-      await upsertSessionDoc(userId, { keys: nextKeys });
-    });
+    if (ops.length) {
+      await WhatsAppSignalKey.bulkWrite(ops, { ordered: false });
+    }
   },
+
   async clear() {
-    return enqueue(userId, async () => {
-      await upsertSessionDoc(userId, { keys: {} });
-    });
+    await WhatsAppSignalKey.deleteMany({ userId });
   },
 });
 
 export const useMongoAuthState = async (userId) => {
   const existingDoc = await getSessionDoc(userId);
-  const initialCreds = existingDoc?.creds ? restoreValue(existingDoc.creds) : initAuthCreds();
+  const initialCreds = existingDoc?.creds
+    ? restoreValue(existingDoc.creds)
+    : initAuthCreds();
 
   const state = {
     creds: initialCreds,
@@ -112,4 +119,5 @@ export const useMongoAuthState = async (userId) => {
 
 export const deleteMongoAuthState = async (userId) => {
   await WhatsAppSession.deleteOne({ userId });
+  await WhatsAppSignalKey.deleteMany({ userId });
 };
