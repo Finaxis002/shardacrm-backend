@@ -156,7 +156,7 @@ const makeSessionLogger = (session) => {
  * Isliye ek retry loop lagate hain (max 5 tries, 1.5s gap) bajaye
  * pehli try mein fail hote hi message drop karne ke.
  */
-const resolveLidToPhone = async (sock, lidJid, session, maxAttempts = 5, delayMs = 1500, msgKey = null) => {
+const resolveLidToPhone = async (sock, lidJid, session, maxAttempts = 2, delayMs = 500, msgKey = null) => {
   const lidUser = lidJid.split("@")[0];
 
   // ── Step 0: pehle apna khud ka cache check karo (logger se capture hua sender_pn) ──
@@ -322,11 +322,7 @@ const processIncomingMessage = async (sock, session, io, userId, msg, pendingSin
     return;
   }
 
-  const isFromMe = Boolean(msg.key.fromMe);
-
-  if (!isFromMe && msg.pushName && msg.key.remoteJid) {
-    upsertWhatsappContact(io, sock, session, userId, msg.key.remoteJid, msg.pushName).catch(() => {});
-  }
+const isFromMe = Boolean(msg.key.fromMe);
 
   const remoteJid = msg.key.remoteJid || "";
   if (remoteJid === "status@broadcast" || remoteJid.endsWith("@newsletter")) {
@@ -705,16 +701,16 @@ export const initBaileys = async (io, userId) => {
       }
     });
 
-    sock.ev.on("messages.upsert", async ({ messages, type }) => {
-      if (type !== "notify") return;
-      for (const msg of messages) {
-        try {
-          await processIncomingMessage(sock, session, io, userId, msg);
-        } catch (err) {
-          logger.error?.(`[messages.upsert] item error: ${err.message}`);
-        }
-      }
-    });
+sock.ev.on("messages.upsert", async ({ messages, type }) => {
+  if (type !== "notify") return;
+  await Promise.allSettled(
+    messages.map((msg) =>
+      processIncomingMessage(sock, session, io, userId, msg).catch((err) =>
+        logger.error?.(`[messages.upsert] item error: ${err.message}`),
+      ),
+    ),
+  );
+});
 
     /* ── Reconnect ke baad WhatsApp jo missed/backfilled messages bhejta hai,
        unhe bhi isi tarah process karo — warna phone se seedha bheja gaya
@@ -1022,7 +1018,7 @@ export const logoutBaileysSession = async (userId) => {
   const session = sessions.get(userId);
   if (!session?.sock || !session.isConnected) {
     await deleteMongoAuthState(userId).catch(() => {});
-    await User.findByIdAndUpdate(userId, { $unset: { waLastSyncedAt: "" } }).catch(() => {});
+    // await User.findByIdAndUpdate(userId, { $unset: { waLastSyncedAt: "" } }).catch(() => {});
     if (session) {
       session.sock = null;
       session.isConnected = false;
@@ -1037,7 +1033,7 @@ export const logoutBaileysSession = async (userId) => {
     logger.warn?.(`[logout] sock.logout() failed, cleaning up anyway: ${error.message}`);
   } finally {
     await deleteMongoAuthState(userId).catch(() => {});
-    await User.findByIdAndUpdate(userId, { $unset: { waLastSyncedAt: "" } }).catch(() => {});
+    // await User.findByIdAndUpdate(userId, { $unset: { waLastSyncedAt: "" } }).catch(() => {});
     if (session) {
       session.sock = null;
       session.isConnected = false;
