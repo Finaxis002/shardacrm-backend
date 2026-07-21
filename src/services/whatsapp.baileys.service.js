@@ -618,28 +618,34 @@ export const initBaileys = async (io, userId) => {
 
   try {
     logger.info?.(`[Baileys] Starting init for user ${userId}`);
-    let { state, saveCreds } = await useMongoAuthState(userId);
-    if (!state?.creds?.noiseKey) {
-      logger.warn?.(`[Baileys] Corrupt/incomplete creds detected for user ${userId}, wiping and starting fresh`);
-      await deleteMongoAuthState(userId).catch(() => {});
-      ({ state, saveCreds } = await useMongoAuthState(userId));
-    }
+let { state, saveCreds } = await useMongoAuthState(userId);
+if (!state?.creds?.noiseKey) {
+  logger.warn?.(`[Baileys] Corrupt/incomplete creds detected for user ${userId}, wiping and starting fresh`);
+  await deleteMongoAuthState(userId).catch(() => {});
+  ({ state, saveCreds } = await useMongoAuthState(userId));
+}
 
-    logger.info?.(`[Baileys] Auth state loaded for user ${userId}`);
-    const { version } = await fetchLatestBaileysVersion();
-    logger.info?.(`[Baileys] Baileys version fetched for user ${userId}: ${version}`);
+logger.info?.(`[Baileys] Auth state loaded for user ${userId}`);
+const { version } = await fetchLatestBaileysVersion();
+logger.info?.(`[Baileys] Baileys version fetched for user ${userId}: ${version}`);
 
-    const sock = makeWASocket({
-      auth: {
-        creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
-      },
-      logger: makeSessionLogger(session),
-      version,
-      printQRInTerminal: false,
-      syncFullHistory: true, // pehli pairing pe WhatsApp poora purana chat history bhejta hai
-      markOnlineOnConnect: false,
-    });
+// Sirf pehli baar (fresh QR scan) full history chahiye — baad ke reconnects
+// (session already registered) pe poori history dobara mangwana bhaari
+// aur unnecessary hai, sirf incremental messages hi chahiye.
+const isFreshPairing = !state?.creds?.registered;
+logger.info?.(`[Baileys] isFreshPairing=${isFreshPairing} for user ${userId}`);
+
+const sock = makeWASocket({
+  auth: {
+    creds: state.creds,
+    keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
+  },
+  logger: makeSessionLogger(session),
+  version,
+  printQRInTerminal: false,
+  syncFullHistory: isFreshPairing, // naye QR scan pe hi poori history, reconnect pe nahi
+  markOnlineOnConnect: false,
+});
     session.sock = sock;
 
     sock.ev.on("creds.update", saveCreds);
@@ -715,8 +721,55 @@ sock.ev.on("messages.upsert", async ({ messages, type }) => {
     /* ── Reconnect ke baad WhatsApp jo missed/backfilled messages bhejta hai,
        unhe bhi isi tarah process karo — warna phone se seedha bheja gaya
        message CRM mein kabhi nahi aayega agar backend connect nahi tha. ── */
-    sock.ev.on("messaging-history.set", async ({ contacts, messages, isLatest }) => {
-      io.to(`user_${userId}`).emit("wa-history-sync", { status: "syncing" });
+sock.ev.on("messaging-history.set", async ({ contacts, messages, isLatest }) => {
+      // ── Progress tracking: is connect-cycle ke liye ek hi baar init karo ──
+      // newestTs = poore session ka sabse naya message (denominator ka top)
+      // oldestTs = ab tak jitna peeche pahunch chuke hain (denominator ka bottom)
+      if (!session.historySyncMeta) {
+        session.historySyncMeta = { newestTs: null, oldestTs: null, cutoffTs: null };
+      }
+
+      if (Array.isArray(messages) && messages.length > 0) {
+        const timestamps = messages
+          .map((m) => Number(m.messageTimestamp?.low ?? m.messageTimestamp ?? 0))
+          .filter(Boolean);
+        if (timestamps.length > 0) {
+          const chunkMax = Math.max(...timestamps);
+          const chunkMin = Math.min(...timestamps);
+          if (session.historySyncMeta.newestTs === null) {
+            session.historySyncMeta.newestTs = chunkMax;
+          } else {
+            session.historySyncMeta.newestTs = Math.max(session.historySyncMeta.newestTs, chunkMax);
+          }
+          session.historySyncMeta.oldestTs =
+            session.historySyncMeta.oldestTs === null
+              ? chunkMin
+              : Math.min(session.historySyncMeta.oldestTs, chunkMin);
+        }
+      }
+
+      const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+      const user = await User.findById(userId).select("waLastSyncedAt").lean();
+      const fallbackCutoffTs = Math.floor((Date.now() - THREE_DAYS_MS) / 1000);
+      let cutoffTs = user?.waLastSyncedAt
+        ? Math.floor(new Date(user.waLastSyncedAt).getTime() / 1000)
+        : fallbackCutoffTs;
+      session.historySyncMeta.cutoffTs = cutoffTs;
+
+      // ── Percent calculate karo: kitna gap (newest → cutoff) cover ho chuka hai ──
+      let percent = 0;
+      const { newestTs, oldestTs } = session.historySyncMeta;
+      if (newestTs !== null && oldestTs !== null) {
+        const totalSpan = newestTs - cutoffTs;
+        const coveredSpan = newestTs - oldestTs;
+        if (totalSpan <= 0) {
+          percent = 100; // cutoff hi newest ke bahut kareeb hai — turant done
+        } else {
+          percent = Math.round(Math.min(100, Math.max(0, (coveredSpan / totalSpan) * 100)));
+        }
+      }
+
+      io.to(`user_${userId}`).emit("wa-history-sync", { status: "syncing", percent });
 
       // ── Contacts backfill: naam + profile picture — sabke liye, purane/naye sabko chahiye ──
       if (Array.isArray(contacts) && contacts.length > 0) {
@@ -726,25 +779,12 @@ sock.ev.on("messages.upsert", async ({ messages, type }) => {
         }
       }
 
-      // ── Last successful sync ke aage se hi backfill karo — taaki logout ke
-      //    dauran ka koi bhi gap miss na ho. Pehli baar connect ho raha ho
-      //    (waLastSyncedAt na ho) to fallback 3 din rakha hai.
-      const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-      const user = await User.findById(userId).select("waLastSyncedAt").lean();
-      const fallbackCutoffTs = Math.floor((Date.now() - THREE_DAYS_MS) / 1000);
-      let cutoffTs = user?.waLastSyncedAt
-        ? Math.floor(new Date(user.waLastSyncedAt).getTime() / 1000)
-        : fallbackCutoffTs; // Baileys timestamp seconds mein hota hai
-
       if (Array.isArray(messages) && messages.length > 0) {
         let recentMessages = messages.filter((msg) => {
           const ts = Number(msg.messageTimestamp?.low ?? msg.messageTimestamp ?? 0);
           return ts >= cutoffTs;
         });
 
-        // ── Safety net: agar saare messages skip ho gaye (stale/corrupt
-        //    waLastSyncedAt ki wajah se), to 3-din-purane fallback cutoff
-        //    se retry karo — warna poora sync silently khaali reh jayega ──
         if (recentMessages.length === 0 && messages.length > 0 && cutoffTs !== fallbackCutoffTs) {
           logger.warn?.(
             `[HISTORY SYNC] All ${messages.length} messages skipped with stale cutoff, retrying with 3-day fallback for userId ${userId}`,
@@ -757,26 +797,27 @@ sock.ev.on("messages.upsert", async ({ messages, type }) => {
         }
 
         logger.info(
-          `[SYNC] cutoff=${new Date(cutoffTs * 1000).toISOString()} totalFromWA=${messages.length} withinCutoff=${recentMessages.length} skippedTooOld=${messages.length - recentMessages.length}`,
+          `[SYNC] cutoff=${new Date(cutoffTs * 1000).toISOString()} totalFromWA=${messages.length} withinCutoff=${recentMessages.length} skippedTooOld=${messages.length - recentMessages.length} percent=${percent}%`,
         );
 
-        logger.info?.(
-          `[HISTORY SYNC] contacts=${contacts?.length || 0} totalMessages=${messages.length} recentMessages=${recentMessages.length} isLatest=${isLatest}`,
-        );
-
-        for (const msg of recentMessages) {
-          try {
-            await processIncomingMessage(sock, session, io, userId, msg);
-          } catch (err) {
-            logger.error?.(`[messaging-history.set] item error: ${err.message}`);
-          }
+        // Batches mein parallel process karo — bada history-sync fast ho
+        const BATCH_SIZE = 15;
+        for (let i = 0; i < recentMessages.length; i += BATCH_SIZE) {
+          const batch = recentMessages.slice(i, i + BATCH_SIZE);
+          await Promise.allSettled(
+            batch.map((msg) =>
+              processIncomingMessage(sock, session, io, userId, msg).catch((err) =>
+                logger.error?.(`[messaging-history.set] item error: ${err.message}`),
+              ),
+            ),
+          );
         }
       }
 
-      // ── Is backfill batch ka time record karo, taaki agli baar yahi se aage sync ho ──
       if (isLatest) {
         await User.findByIdAndUpdate(userId, { waLastSyncedAt: new Date() }).catch(() => {});
-        io.to(`user_${userId}`).emit("wa-history-sync", { status: "done" });
+        io.to(`user_${userId}`).emit("wa-history-sync", { status: "completed", percent: 100 }); 
+        session.historySyncMeta = null; // agli baar ke liye reset
       }
     });
 

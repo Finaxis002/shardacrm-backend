@@ -3,8 +3,7 @@ import { BufferJSON } from "@whiskeysockets/baileys/lib/Utils/generics.js";
 import WhatsAppSession from "../models/WhatsAppSession.model.js";
 import WhatsAppSignalKey from "../models/WhatsAppSignalKey.model.js";
 
-/* ── creds ke liye per-user write queue — taaki concurrent saveCreds() calls
-     ek dusre ko overwrite na karein ── */
+
 const userQueues = new Map();
 
 const enqueue = (userId, task) => {
@@ -46,9 +45,7 @@ const upsertSessionDoc = async (userId, update) => {
   );
 };
 
-/* ── Signal keys ab yahan store hote hain — ek document per (userId, category, keyId).
-     Na poora keys object padhna padta hai, na poora wapas likhna — sirf jo IDs
-     chahiye/change hui hain unhi par query/write hoti hai. ── */
+
 const buildSignalKeyStore = (userId) => ({
   async get(type, ids) {
     const docs = await WhatsAppSignalKey.find({
