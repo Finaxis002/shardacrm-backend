@@ -52,8 +52,13 @@ io.on("connection", (socket) => {
   });
 
 socket.on("trigger-mobile-call", ({ userId, phoneNumber, leadName }) => {
-  logger.info(`trigger-mobile-call received for user_${userId}, phone: ${phoneNumber}`); // 👈 ADD KARO
-  io.to(`user_${userId}`).emit("incoming-call-trigger", { phoneNumber, leadName });
+  logger.info(`trigger-mobile-call received for user_${userId}, phone: ${phoneNumber}`);
+
+  const room = `user_${userId}`;
+  const roomSockets = io.sockets.adapter.rooms.get(room);
+  logger.info(`Room ${room} has ${roomSockets ? roomSockets.size : 0} socket(s) connected: [${roomSockets ? [...roomSockets].join(", ") : ""}]`);
+
+  io.to(room).emit("incoming-call-trigger", { phoneNumber, leadName });
 });
 
   socket.on("disconnect", () => {
