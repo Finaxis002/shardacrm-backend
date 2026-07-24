@@ -2,17 +2,21 @@ import fs from "fs";
 import path from "path";
 import CallLog from "../models/CallLog.model.js";
 import Lead from "../models/Lead.model.js";
+import Settings from "../models/Settings.model.js";
 import ApiError from "../utils/apiError.js";
 import ApiResponse from "../utils/apiResponse.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import logger from "../utils/logger.js";
 import { analyzeCallRecording } from "../services/aiCallAnalysis.service.js";
 
-const runCallLogAiAnalysisInBackground = async (callLogId, filePath) => {
+const runCallLogAiAnalysisInBackground = async (
+  callLogId,
+  filePath,
+  userId,
+  orgId,
+) => {
   try {
-    // analyzeCallRecording already falls back to Groq internally on failure,
-    // so no need to retry Groq again here.
-    const analysis = await analyzeCallRecording(filePath);
+    const analysis = await analyzeCallRecording(filePath, userId, orgId);
 
     await CallLog.findByIdAndUpdate(callLogId, {
       $set: {
@@ -27,7 +31,9 @@ const runCallLogAiAnalysisInBackground = async (callLogId, filePath) => {
       },
     });
 
-    logger.info(`AI analysis completed for call log ${callLogId}`);
+    logger.info(
+      `AI analysis completed for call log ${callLogId} via ${analysis.provider}`,
+    );
   } catch (err) {
     logger.error(`AI analysis failed for call log ${callLogId}`, {
       error: err.message,
@@ -87,11 +93,7 @@ export const syncCallLogs = asyncHandler(async (req, res) => {
         await CallLog.findOneAndUpdate(
           query,
           { $set: callData },
-          {
-            upsert: true,
-            new: true,
-            setDefaultsOnInsert: true,
-          },
+          { upsert: true, new: true, setDefaultsOnInsert: true },
         );
       } else {
         await CallLog.create(callData);
@@ -103,7 +105,6 @@ export const syncCallLogs = asyncHandler(async (req, res) => {
   }
 
   logger.info(`Call logs synced: ${syncedCount} by user ${userId}`);
-
   res
     .status(200)
     .json(new ApiResponse(200, { synced: syncedCount }, "Call logs synced"));
@@ -119,10 +120,7 @@ export const uploadCallLogWithRecording = asyncHandler(async (req, res) => {
     deviceCallId,
   } = req.body;
 
-  if (!req.file) {
-    throw new ApiError(400, "No file uploaded");
-  }
-
+  if (!req.file) throw new ApiError(400, "No file uploaded");
   if (!phoneNumber || !callType || !callTimestamp) {
     throw new ApiError(
       400,
@@ -166,11 +164,7 @@ export const uploadCallLogWithRecording = asyncHandler(async (req, res) => {
     callLog = await CallLog.findOneAndUpdate(
       query,
       { $set: callData },
-      {
-        upsert: true,
-        new: true,
-        setDefaultsOnInsert: true,
-      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
     );
   } else {
     callLog = await CallLog.create(callData);
@@ -193,23 +187,29 @@ export const uploadCallLogWithRecording = asyncHandler(async (req, res) => {
   }
 
   logger.info(`Call log uploaded with recording for user ${userId}`);
-
   res
     .status(200)
     .json(new ApiResponse(200, callLog, "Call log with recording uploaded"));
 
-  // Fire-and-forget — response already sent above, this runs after
-  const recordingFilename = callLog.recordingUrl.split("/").pop();
-  const finalPath = path.join(path.dirname(req.file.path), recordingFilename);
-  logger.info(`AI queued | callLog: ${callLog._id} | path: ${finalPath}`);
-  runCallLogAiAnalysisInBackground(callLog._id, finalPath);
+  const settings = await Settings.findOne({ organization }).select(
+    "+ai.gemini.key +ai.groq.key",
+  );
+  if (settings?.ai?.autoAnalyseCallLogs) {
+    const recordingFilename = callLog.recordingUrl.split("/").pop();
+    const finalPath = path.join(path.dirname(req.file.path), recordingFilename);
+    logger.info(`AI queued | callLog: ${callLog._id} | path: ${finalPath}`);
+    runCallLogAiAnalysisInBackground(
+      callLog._id,
+      finalPath,
+      userId,
+      organization,
+    );
+  }
 });
 
 export const getCallLogsForLead = asyncHandler(async (req, res) => {
   const { leadId } = req.query;
-  if (!leadId) {
-    throw new ApiError(400, "leadId is required");
-  }
+  if (!leadId) throw new ApiError(400, "leadId is required");
 
   const logs = await CallLog.find({
     organization: req.user.organization,
@@ -236,19 +236,16 @@ export const getAllCallLogs = asyncHandler(async (req, res) => {
       filter.callTimestamp.$lte = new Date(endDate + "T23:59:59+05:30");
   }
 
-  // limit na diya ho toh sab records fetch karo (no pagination)
   let query = CallLog.find(filter)
     .populate("user", "name email")
     .populate("lead", "name phone")
     .sort({ callTimestamp: -1 });
 
-  if (limit) {
+  if (limit)
     query = query.skip((page - 1) * Number(limit)).limit(Number(limit));
-  }
 
   const logs = await query;
 
-  // ── Fallback: jin logs ka lead null hai, unko phone number se match karo ──
   const unmatchedLogs = logs.filter((l) => !l.lead && l.phoneNumber);
   if (unmatchedLogs.length) {
     const cleanNumbers = [
@@ -267,14 +264,10 @@ export const getAllCallLogs = asyncHandler(async (req, res) => {
         ],
       }));
 
-      const matchedLeads = await Lead.find({
-        organization,
-        $or: regexOr,
-      })
+      const matchedLeads = await Lead.find({ organization, $or: regexOr })
         .select("name phone alternatePhone")
         .lean();
 
-      // number → lead lookup map banao
       const leadByNumber = {};
       matchedLeads.forEach((ld) => {
         const p1 = String(ld.phone || "")
@@ -302,7 +295,6 @@ export const getAllCallLogs = asyncHandler(async (req, res) => {
   }
 
   const total = await CallLog.countDocuments(filter);
-
   res
     .status(200)
     .json(
@@ -317,17 +309,13 @@ export const getAllCallLogs = asyncHandler(async (req, res) => {
 export const uploadRecording = asyncHandler(async (req, res) => {
   const { id } = req.params;
 
-  if (!req.file) {
-    throw new ApiError(400, "No file uploaded");
-  }
+  if (!req.file) throw new ApiError(400, "No file uploaded");
 
   const callLog = await CallLog.findOne({
     _id: id,
     organization: req.user.organization,
   });
-  if (!callLog) {
-    throw new ApiError(404, "Call log not found");
-  }
+  if (!callLog) throw new ApiError(404, "Call log not found");
 
   const relativeUrl = `/uploads/call-recordings/${req.file.filename}`;
   callLog.recordingUrl = relativeUrl;
@@ -338,10 +326,22 @@ export const uploadRecording = asyncHandler(async (req, res) => {
     .status(200)
     .json(new ApiResponse(200, callLog, "Recording uploaded successfully"));
 
-  // Fire-and-forget — response already sent above, this runs after
-  runCallLogAiAnalysisInBackground(callLog._id, req.file.path);
+  const organization = req.user.organization;
+  const userId = req.user._id;
+
+  const settings = await Settings.findOne({ organization }).select(
+    "+ai.gemini.key +ai.groq.key",
+  );
+  if (settings?.ai?.autoAnalyseCallLogs) {
+    runCallLogAiAnalysisInBackground(
+      callLog._id,
+      req.file.path,
+      userId,
+      organization,
+    );
+  }
 });
-// ─── NEW: Per-user call tracing / stats ──────────────────────────────────
+
 export const getCallStatsByUser = asyncHandler(async (req, res) => {
   const { startDate, endDate } = req.query;
   const organization = req.user.organization;
@@ -361,13 +361,11 @@ export const getCallStatsByUser = asyncHandler(async (req, res) => {
       $group: {
         _id: "$user",
         totalCalls: { $sum: 1 },
-        // Outgoing direction 
         outgoingCalls: {
           $sum: {
             $cond: [{ $in: ["$callType", ["Outgoing", "No Answer"]] }, 1, 0],
           },
         },
-        // Incoming direction 
         incomingCalls: {
           $sum: {
             $cond: [
@@ -377,13 +375,11 @@ export const getCallStatsByUser = asyncHandler(async (req, res) => {
             ],
           },
         },
-        // Genuinely connected 
         connectedCalls: {
           $sum: {
             $cond: [{ $in: ["$callType", ["Outgoing", "Incoming"]] }, 1, 0],
           },
         },
-        // Connect nahi hui
         notConnectedCalls: {
           $sum: {
             $cond: [

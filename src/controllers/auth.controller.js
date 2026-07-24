@@ -11,25 +11,17 @@ const generateTokens = async (userId) => {
   const user = await User.findById(userId);
 
   const accessToken = jwt.sign(
-    {
-      _id: user._id,
-      email: user.email,
-      role: user.role,
-    },
+    { _id: user._id, email: user.email, role: user.role },
     config.jwtSecret,
     { expiresIn: config.jwtExpire },
   );
 
-  const refreshToken = jwt.sign(
-    {
-      _id: user._id,
-    },
-    config.jwtSecret,
-    { expiresIn: "30d" },
-  );
+  const refreshToken = jwt.sign({ _id: user._id }, config.jwtSecret, {
+    expiresIn: "30d",
+  });
 
-  user.refreshToken = refreshToken;
-  await user.save();
+  // findByIdAndUpdate — sirf refreshToken update, baaki fields untouched
+  await User.findByIdAndUpdate(userId, { $set: { refreshToken } });
 
   return { accessToken, refreshToken };
 };
@@ -50,14 +42,12 @@ export const register = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Email already registered");
   }
 
-  // Create organization
   const org = await Organization.create({
     name: companyName,
     slug: companyName.toLowerCase().replace(/\s+/g, "-"),
-    owner: null, // Will be set after user creation
+    owner: null,
   });
 
-  // Create user
   const user = await User.create({
     name,
     email: email.toLowerCase(),
@@ -66,12 +56,10 @@ export const register = asyncHandler(async (req, res) => {
     organization: org._id,
   });
 
-  // Update organization with owner
   org.owner = user._id;
   org.members = [user._id];
   await org.save();
 
-  // Create settings
   await Settings.create({
     organization: org._id,
     companyName,
@@ -167,14 +155,6 @@ export const register = asyncHandler(async (req, res) => {
     gateways: {},
     defaultGateway: "",
     paymentLinkExpiry: 48,
-    aiProvider: "",
-    aiKey: "",
-    aiModel: "",
-    aiEndpoint: "",
-    aiPrompt: "",
-    aiAutoAnalyse: false,
-    aiScanNotes: true,
-    aiIntent: false,
     currency: "₹",
     timezone: "Asia/Kolkata",
   });
@@ -210,20 +190,16 @@ export const login = asyncHandler(async (req, res) => {
     "+password",
   );
 
-  if (!user) {
-    throw new ApiError(401, "No account found with this email");
-  }
+  if (!user) throw new ApiError(401, "No account found with this email");
 
   const isPasswordValid = await user.comparePassword(password);
-
-  if (!isPasswordValid) {
+  if (!isPasswordValid)
     throw new ApiError(401, "Incorrect password. Please try again");
-  }
 
   const { accessToken, refreshToken } = await generateTokens(user._id);
 
-  user.lastLogin = new Date();
-  await user.save();
+  // findByIdAndUpdate — sirf lastLogin, baaki fields untouched
+  await User.findByIdAndUpdate(user._id, { $set: { lastLogin: new Date() } });
 
   const options = {
     httpOnly: true,
@@ -245,7 +221,8 @@ export const login = asyncHandler(async (req, res) => {
 
 export const refreshToken = asyncHandler(async (req, res) => {
   const userId = req.user._id;
-  const { accessToken, refreshToken } = await generateTokens(userId);
+  const { accessToken, refreshToken: newRefreshToken } =
+    await generateTokens(userId);
 
   const options = {
     httpOnly: true,
@@ -255,22 +232,18 @@ export const refreshToken = asyncHandler(async (req, res) => {
   return res
     .status(200)
     .cookie("accessToken", accessToken, options)
-    .cookie("refreshToken", refreshToken, options)
+    .cookie("refreshToken", newRefreshToken, options)
     .json(
       new ApiResponse(
         200,
-        { accessToken, refreshToken },
-        "Access token refreshed successfully",
+        { accessToken, refreshToken: newRefreshToken },
+        "Access token refreshed",
       ),
     );
 });
 
 export const logout = asyncHandler(async (req, res) => {
-  await User.findByIdAndUpdate(req.user._id, {
-    $unset: {
-      refreshToken: 1,
-    },
-  });
+  await User.findByIdAndUpdate(req.user._id, { $unset: { refreshToken: 1 } });
 
   const options = {
     httpOnly: true,
@@ -290,43 +263,26 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, req.user.toJSON(), "Current user fetched"));
 });
 
-// Admin initialization endpoint (one-time setup for production)
 export const initializeAdmin = asyncHandler(async (req, res) => {
-  // Check if any admin already exists
   const existingAdmin = await User.findOne({ role: "admin" });
+  if (existingAdmin) throw new ApiError(400, "Admin already exists");
 
-  if (existingAdmin) {
-    throw new ApiError(
-      400,
-      "Admin already exists. Initialization cannot be performed.",
-    );
-  }
-
-  // Hardcoded admin credentials
   const admins = [
     {
       name: "Anugrah Sharda",
       email: "anugrah@sharda.in",
       password: "admin@123",
     },
-    {
-      name: "Anunay Sharda",
-      email: "anunay@sharda.in",
-      password: "admin@123",
-    },
+    { name: "Anunay Sharda", email: "anunay@sharda.in", password: "admin@123" },
   ];
 
-  const companyName = "Sharda Associates";
-
-  // Create organization
   const org = await Organization.create({
-    name: companyName,
+    name: "Sharda Associates",
     slug: "sharda-associates",
     owner: null,
     members: [],
   });
 
-  // Create all admin users
   const createdAdmins = [];
   for (const admin of admins) {
     const user = await User.create({
@@ -342,14 +298,12 @@ export const initializeAdmin = asyncHandler(async (req, res) => {
     org.members.push(user._id);
   }
 
-  // Update organization with owner and members
   org.owner = createdAdmins[0]._id;
   await org.save();
 
-  // Create default organization settings
   await Settings.create({
     organization: org._id,
-    companyName,
+    companyName: "Sharda Associates",
     distributionMethod: "round_robin",
     distributionPool: [],
     rrIndex: 0,
@@ -442,14 +396,6 @@ export const initializeAdmin = asyncHandler(async (req, res) => {
     gateways: {},
     defaultGateway: "",
     paymentLinkExpiry: 48,
-    aiProvider: "",
-    aiKey: "",
-    aiModel: "",
-    aiEndpoint: "",
-    aiPrompt: "",
-    aiAutoAnalyse: false,
-    aiScanNotes: true,
-    aiIntent: false,
     currency: "₹",
     timezone: "Asia/Kolkata",
   });
@@ -458,13 +404,10 @@ export const initializeAdmin = asyncHandler(async (req, res) => {
     new ApiResponse(
       201,
       {
-        admins: createdAdmins.map((user) => user.toJSON()),
-        organization: {
-          id: org._id,
-          name: org.name,
-        },
+        admins: createdAdmins.map((u) => u.toJSON()),
+        organization: { id: org._id, name: org.name },
       },
-      "Admin initialized successfully. Login with credentials: anugrah@sharda.in / admin@123",
+      "Admin initialized",
     ),
   );
 });

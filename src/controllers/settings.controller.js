@@ -112,9 +112,9 @@ const DEFAULT_LEAD_COLUMNS = [
   "assign",
 ];
 
-const createDefaultSettings = (organization, companyName = "Sharda Associates") => ({
+const createDefaultSettings = (organization, companyName = "") => ({
   organization,
-  companyName: "Sharda Associates",
+  companyName,
   distributionMethod: "round_robin",
   distributionPool: [],
   rrIndex: 0,
@@ -130,17 +130,18 @@ const createDefaultSettings = (organization, companyName = "Sharda Associates") 
   gateways: {},
   defaultGateway: "",
   paymentLinkExpiry: 48,
-  aiProvider: "",
-  aiKey: "",
-  aiModel: "",
-  aiEndpoint: "",
-  aiPrompt: "",
-  aiAutoAnalyse: false,
-  aiScanNotes: true,
-  aiIntent: false,
+  ai: {
+    gemini: { enabled: false, key: "", model: "gemini-2.5-flash" },
+    groq: { enabled: false, key: "", model: "whisper-large-v3" },
+    autoAnalyse: false,
+    autoAnalyseCallLogs: true,
+    prompt: "",
+    scanNotes: true,
+  },
   currency: "₹",
   timezone: "Asia/Kolkata",
 });
+
 const normalizeSettings = (settings) => {
   if (!settings) return settings;
   const obj = settings.toObject ? settings.toObject() : settings;
@@ -173,15 +174,31 @@ const normalizeSettings = (settings) => {
     gateways: obj.gateways || {},
     defaultGateway: obj.defaultGateway || "",
     paymentLinkExpiry: obj.paymentLinkExpiry || 48,
-    aiProvider: obj.aiProvider || "",
-    aiKey: obj.aiKey || "",
-    aiModel: obj.aiModel || "",
-    aiEndpoint: obj.aiEndpoint || "",
-    aiPrompt: obj.aiPrompt || "",
-    aiAutoAnalyse: obj.aiAutoAnalyse || false,
-    aiScanNotes: obj.aiScanNotes !== undefined ? obj.aiScanNotes : true,
-    aiIntent: obj.aiIntent || false,
-    companyName: "Sharda Associates",
+
+    // ── AI (keys stripped from response) ──
+    ai: {
+      gemini: {
+        enabled: obj.ai?.gemini?.enabled || false,
+        key: obj.ai?.gemini?.key || "",
+        model: obj.ai?.gemini?.model || "gemini-2.5-flash",
+        hasKey: !!obj.ai?.gemini?.key,
+      },
+      groq: {
+        enabled: obj.ai?.groq?.enabled || false,
+        key: obj.ai?.groq?.key || "",
+        model: obj.ai?.groq?.model || "whisper-large-v3",
+        hasKey: !!obj.ai?.groq?.key,
+      },
+      autoAnalyse: obj.ai?.autoAnalyse || false,
+      autoAnalyseCallLogs:
+        obj.ai?.autoAnalyseCallLogs !== undefined
+          ? obj.ai?.autoAnalyseCallLogs
+          : true,
+      prompt: obj.ai?.prompt !== undefined ? obj.ai?.prompt : "",
+      scanNotes: obj.ai?.scanNotes !== undefined ? obj.ai?.scanNotes : true,
+    },
+
+    companyName: obj.companyName || "",
     currency: obj.currency || "₹",
     timezone: obj.timezone || "Asia/Kolkata",
     createdAt: obj.createdAt,
@@ -191,15 +208,12 @@ const normalizeSettings = (settings) => {
 
 export const getSettings = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
-  let settings = await Settings.findOne({ organization }).populate(
-    "distributionPool",
-    "name email role color",
-  );
-
+  let settings = await Settings.findOne({ organization })
+    .select("+ai.gemini.key +ai.groq.key")
+    .populate("distributionPool", "name email role color");
   if (!settings) {
     settings = await Settings.create(createDefaultSettings(organization));
   }
-
   res
     .status(200)
     .json(
@@ -211,11 +225,14 @@ export const updateSettings = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
   const update = { ...req.body };
 
-  let settings = await Settings.findOne({ organization });
+  let settings = await Settings.findOne({ organization }).select(
+    "+ai.gemini.key +ai.groq.key",
+  );
   if (!settings) {
     settings = await Settings.create(createDefaultSettings(organization));
   }
 
+  // ── Flat fields ──
   const allowedFields = [
     "distributionMethod",
     "distributionPool",
@@ -232,14 +249,7 @@ export const updateSettings = asyncHandler(async (req, res) => {
     "gateways",
     "defaultGateway",
     "paymentLinkExpiry",
-    "aiProvider",
-    "aiKey",
-    "aiModel",
-    "aiEndpoint",
-    "aiPrompt",
-    "aiAutoAnalyse",
-    "aiScanNotes",
-    "aiIntent",
+    "companyName",
     "currency",
     "timezone",
   ];
@@ -250,12 +260,54 @@ export const updateSettings = asyncHandler(async (req, res) => {
     }
   });
 
+  // ── AI deep merge ──
+  if (Object.prototype.hasOwnProperty.call(update, "ai")) {
+    const incoming = update.ai || {};
+    settings.ai = {
+      gemini: {
+        enabled:
+          incoming.gemini?.enabled ?? settings.ai?.gemini?.enabled ?? false,
+        key:
+          incoming.gemini?.key !== undefined
+            ? incoming.gemini.key
+            : settings.ai?.gemini?.key || "",
+        model:
+          incoming.gemini?.model ||
+          settings.ai?.gemini?.model ||
+          "gemini-2.5-flash",
+      },
+      groq: {
+        enabled: incoming.groq?.enabled ?? settings.ai?.groq?.enabled ?? false,
+        key:
+          incoming.groq?.key !== undefined
+            ? incoming.groq.key
+            : settings.ai?.groq?.key || "",
+        model:
+          incoming.groq?.model ||
+          settings.ai?.groq?.model ||
+          "whisper-large-v3",
+      },
+      autoAnalyse: incoming.autoAnalyse ?? settings.ai?.autoAnalyse ?? false,
+      autoAnalyseCallLogs:
+        incoming.autoAnalyseCallLogs ??
+        settings.ai?.autoAnalyseCallLogs ??
+        true,
+      prompt:
+        incoming.prompt !== undefined
+          ? incoming.prompt
+          : settings.ai?.prompt || "",
+      scanNotes:
+        incoming.scanNotes !== undefined
+          ? incoming.scanNotes
+          : (settings.ai?.scanNotes ?? true),
+    };
+  }
+
   await settings.save();
 
-  settings = await Settings.findById(settings._id).populate(
-    "distributionPool",
-    "name email role color",
-  );
+  settings = await Settings.findById(settings._id)
+    .select("+ai.gemini.key +ai.groq.key")
+    .populate("distributionPool", "name email role color");
 
   logger.info(`Settings updated for organization ${organization}`);
   res
@@ -268,17 +320,15 @@ export const updateSettings = asyncHandler(async (req, res) => {
 export const getPipelineStages = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
   let settings = await Settings.findOne({ organization });
-  if (!settings) {
+  if (!settings)
     settings = await Settings.create(createDefaultSettings(organization));
-  }
-
   res
     .status(200)
     .json(
       new ApiResponse(
         200,
         settings.pipelineStages || DEFAULT_PIPELINE_STAGES,
-        "Pipeline stages fetched successfully",
+        "Pipeline stages fetched",
       ),
     );
 });
@@ -286,15 +336,12 @@ export const getPipelineStages = asyncHandler(async (req, res) => {
 export const updatePipelineStages = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
   const { pipelineStages } = req.body;
-
-  if (!Array.isArray(pipelineStages)) {
+  if (!Array.isArray(pipelineStages))
     throw new ApiError(400, "pipelineStages must be an array");
-  }
 
   let settings = await Settings.findOne({ organization });
-  if (!settings) {
+  if (!settings)
     settings = await Settings.create(createDefaultSettings(organization));
-  }
 
   settings.pipelineStages = pipelineStages;
   await settings.save();
@@ -303,21 +350,19 @@ export const updatePipelineStages = asyncHandler(async (req, res) => {
     "distributionPool",
     "name email role color",
   );
-
   res
     .status(200)
     .json(
       new ApiResponse(
         200,
         normalizeSettings(settings),
-        "Pipeline stages updated successfully",
+        "Pipeline stages updated",
       ),
     );
 });
 
 export const exportOrganizationData = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
-
   const [users, leads, payments, reminders, settings] = await Promise.all([
     User.find({ organization }).select("-password -refreshToken").lean(),
     Lead.find({ organization }).lean(),
@@ -325,31 +370,21 @@ export const exportOrganizationData = asyncHandler(async (req, res) => {
     Reminder.find({ organization }).lean(),
     Settings.findOne({ organization }).lean(),
   ]);
-
-  if (!settings) {
-    throw new ApiError(404, "Settings not found for organization");
-  }
-
-  res.status(200).json(
-    new ApiResponse(
-      200,
-      {
-        users,
-        leads,
-        payments,
-        reminders,
-        settings,
-      },
-      "Export data fetched successfully",
-    ),
-  );
+  if (!settings) throw new ApiError(404, "Settings not found for organization");
+  res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        { users, leads, payments, reminders, settings },
+        "Export data fetched successfully",
+      ),
+    );
 });
 
 export const exportOnlyLeads = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
-
   const leads = await Lead.find({ organization }).lean();
-
   res
     .status(200)
     .json(new ApiResponse(200, { leads }, "Leads export fetched successfully"));
@@ -357,7 +392,6 @@ export const exportOnlyLeads = asyncHandler(async (req, res) => {
 
 export const clearLeads = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
-
   const leadDelete = await Lead.deleteMany({ organization });
   const reminderDelete = await Reminder.deleteMany({ organization });
   const paymentDelete = await Payment.deleteMany({ organization });
@@ -372,6 +406,117 @@ export const clearLeads = asyncHandler(async (req, res) => {
         deletedPayments: paymentDelete.deletedCount,
       },
       "Leads and related records cleared successfully",
+    ),
+  );
+});
+
+// ════════════════════════════════════════════════════
+//  PER-USER AI KEYS (Admin only)
+// ════════════════════════════════════════════════════
+
+/**
+ * GET actual AI keys for a user (admin only — for edit modal)
+ * @route GET /api/v1/users/:userId/ai-keys
+ */
+export const getUserAiKeys = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const organization = req.user.organization;
+
+  if (req.user.role !== "admin" && String(req.user._id) !== String(userId)) {
+    throw new ApiError(403, "Only admin can view AI keys");
+  }
+
+  const [user, settings] = await Promise.all([
+    User.findById(userId).select("+ai.gemini.key +ai.groq.key").lean(),
+    Settings.findOne({ organization }).lean(),
+  ]);
+
+  if (!user) throw new ApiError(404, "User not found");
+
+  // Fallback models from org settings
+  const geminiFallbackModel = settings?.ai?.gemini?.model || "gemini-2.5-flash";
+  const groqFallbackModel = settings?.ai?.groq?.model || "whisper-large-v3";
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        _id: user._id,
+        name: user.name,
+        ai: {
+          gemini: {
+            key: user.ai?.gemini?.key || "",
+            model: user.ai?.gemini?.model || geminiFallbackModel,
+            hasKey: !!user.ai?.gemini?.key,
+          },
+          groq: {
+            key: user.ai?.groq?.key || "",
+            model: user.ai?.groq?.model || groqFallbackModel,
+            hasKey: !!user.ai?.groq?.key,
+          },
+        },
+      },
+      "User AI keys fetched",
+    ),
+  );
+});
+
+export const updateUserAiKeys = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const { geminiKey, geminiModel, groqKey, groqModel } = req.body;
+  const organization = req.user.organization;
+
+  const user = await User.findOne({ _id: userId, organization });
+  if (!user) throw new ApiError(404, "User not found");
+
+  if (req.user.role !== "admin" && String(req.user._id) !== String(userId)) {
+    throw new ApiError(403, "Only admin can manage other users' AI keys");
+  }
+
+  user.ai = {
+    gemini: {
+      key:
+        geminiKey !== undefined ? geminiKey || "" : user.ai?.gemini?.key || "",
+      model:
+        geminiModel !== undefined
+          ? geminiModel || ""
+          : user.ai?.gemini?.model || "",
+    },
+    groq: {
+      key: groqKey !== undefined ? groqKey || "" : user.ai?.groq?.key || "",
+      model:
+        groqModel !== undefined ? groqModel || "" : user.ai?.groq?.model || "",
+    },
+  };
+
+  await user.save();
+
+  logger.info(`AI keys updated for user ${userId} by ${req.user._id}`);
+
+  const [settings] = await Promise.all([
+    Settings.findOne({ organization }).lean(),
+  ]);
+  const geminiFallbackModel = settings?.ai?.gemini?.model || "gemini-2.5-flash";
+  const groqFallbackModel = settings?.ai?.groq?.model || "whisper-large-v3";
+
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        _id: user._id,
+        name: user.name,
+        ai: {
+          gemini: {
+            hasKey: !!user.ai?.gemini?.key,
+            model: user.ai?.gemini?.model || geminiFallbackModel,
+          },
+          groq: {
+            hasKey: !!user.ai?.groq?.key,
+            model: user.ai?.groq?.model || groqFallbackModel,
+          },
+        },
+      },
+      "User AI keys updated",
     ),
   );
 });

@@ -21,18 +21,9 @@ const userSchema = new mongoose.Schema(
       minlength: 6,
       select: false,
     },
-    phone: {
-      type: String,
-      sparse: true,
-    },
-    avatar: {
-      type: String, // Cloudinary URL
-      default: null,
-    },
-    color: {
-      type: String,
-      default: "#2f6df5",
-    },
+    phone: { type: String, sparse: true },
+    avatar: { type: String, default: null },
+    color: { type: String, default: "#2f6df5" },
     role: {
       type: String,
       enum: ["admin", "manager", "tl", "exec", "viewer"],
@@ -42,52 +33,45 @@ const userSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Organization",
     },
-    permissions: [
-      {
-        type: String,
-      },
-    ],
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
-    lastLogin: {
-      type: Date,
-      default: null,
-    },
-    googleId: {
-      type: String,
-      sparse: true,
-    },
-    refreshToken: {
-      type: String,
-      select: false,
-    },
+    permissions: [{ type: String }],
+    isActive: { type: Boolean, default: true },
+    lastLogin: { type: Date, default: null },
+    googleId: { type: String, sparse: true },
+    refreshToken: { type: String, select: false },
 
-    // ── WhatsApp (Baileys) ka last successful message-history sync ────────
-    waLastSyncedAt: {
-      type: Date,
-      default: null,
-    },
+    // ── WhatsApp ──
+    waLastSyncedAt: { type: Date, default: null },
 
-    // ── Google Calendar (per-user connection) ─────────────────────────────
-    gcalConnected: {
-      type: Boolean,
-      default: false,
-    },
-    gcalUser: {
-      type: String,   // connected Gmail address
-      default: "",
-    },
+    // ── Google Calendar (per-user) ──
+    gcalConnected: { type: Boolean, default: false },
+    gcalUser: { type: String, default: "" },
     gcalTokens: {
-      access_token:  { type: String, default: "", select: false },
+      access_token: { type: String, default: "", select: false },
       refresh_token: { type: String, default: "", select: false },
-      expiry_date:   { type: Number, default: 0,  select: false },
-      token_type:    { type: String, default: "" },
-      scope:         { type: String, default: "" },
+      expiry_date: { type: Number, default: 0, select: false },
+      token_type: { type: String, default: "" },
+      scope: { type: String, default: "" },
     },
-    // ─────────────────────────────────────────────────────────────────────
-   managerId: {
+
+    // ── Per-User AI Keys (override org settings) ──
+    ai: {
+      type: {
+        gemini: {
+          key: { type: String, default: "", select: false },
+          model: { type: String, default: "" },
+        },
+        groq: {
+          key: { type: String, default: "", select: false },
+          model: { type: String, default: "" },
+        },
+      },
+      default: {
+        gemini: { key: "", model: "" },
+        groq: { key: "", model: "" },
+      },
+    },
+
+    managerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,
@@ -99,7 +83,6 @@ const userSchema = new mongoose.Schema(
 // Hash password before saving
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next();
-
   try {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
@@ -109,7 +92,7 @@ userSchema.pre("save", async function (next) {
   }
 });
 
-// Method to compare passwords
+// Compare password
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
@@ -119,8 +102,22 @@ userSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password;
   delete obj.refreshToken;
-  // gcalTokens bhi hide karo — frontend ko sirf gcalConnected & gcalUser chahiye
   delete obj.gcalTokens;
+
+  // Strip actual keys, expose hasKey + model only
+  if (obj.ai) {
+    obj.ai = {
+      gemini: {
+        hasKey: !!obj.ai?.gemini?.key,
+        model: obj.ai?.gemini?.model || "",
+      },
+      groq: {
+        hasKey: !!obj.ai?.groq?.key,
+        model: obj.ai?.groq?.model || "",
+      },
+    };
+  }
+
   return obj;
 };
 
