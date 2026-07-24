@@ -112,9 +112,9 @@ const DEFAULT_LEAD_COLUMNS = [
   "assign",
 ];
 
-const createDefaultSettings = (organization, companyName = "") => ({
+const createDefaultSettings = (organization, companyName = "Sharda Associates") => ({
   organization,
-  companyName,
+  companyName: "Sharda Associates",
   distributionMethod: "round_robin",
   distributionPool: [],
   rrIndex: 0,
@@ -181,7 +181,7 @@ const normalizeSettings = (settings) => {
     aiAutoAnalyse: obj.aiAutoAnalyse || false,
     aiScanNotes: obj.aiScanNotes !== undefined ? obj.aiScanNotes : true,
     aiIntent: obj.aiIntent || false,
-    companyName: obj.companyName || "",
+    companyName: "Sharda Associates",
     currency: obj.currency || "₹",
     timezone: obj.timezone || "Asia/Kolkata",
     createdAt: obj.createdAt,
@@ -240,7 +240,6 @@ export const updateSettings = asyncHandler(async (req, res) => {
     "aiAutoAnalyse",
     "aiScanNotes",
     "aiIntent",
-    "companyName",
     "currency",
     "timezone",
   ];
