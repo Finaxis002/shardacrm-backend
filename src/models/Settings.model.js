@@ -15,18 +15,10 @@ const settingsSchema = new mongoose.Schema(
       enum: ["round_robin", "equal_load", "manual"],
       default: "round_robin",
     },
-    distributionPool: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-      },
-    ],
-    rrIndex: {
-      type: Number,
-      default: 0,
-    },
+    distributionPool: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    rrIndex: { type: Number, default: 0 },
 
-    // Pipeline stages embedded in settings
+    // Pipeline stages
     pipelineStages: [
       {
         name: { type: String, required: true, trim: true },
@@ -57,11 +49,9 @@ const settingsSchema = new mongoose.Schema(
       default: [],
     },
 
-    // ── Google Calendar ──────────────────────────────────────────────────────
+    // ── Google Calendar ──
     gcalConnected: { type: Boolean, default: false },
     gcalUser: { type: String, default: "" },
-
-    // OAuth tokens stored securely in the DB (never sent to frontend)
     gcalTokens: {
       access_token: { type: String, default: "" },
       refresh_token: { type: String, default: "" },
@@ -69,7 +59,6 @@ const settingsSchema = new mongoose.Schema(
       token_type: { type: String, default: "" },
       scope: { type: String, default: "" },
     },
-
     gmailEnabled: { type: Boolean, default: false },
 
     // Payment Gateways
@@ -77,19 +66,33 @@ const settingsSchema = new mongoose.Schema(
     defaultGateway: { type: String, default: "" },
     paymentLinkExpiry: { type: Number, default: 48 },
 
-    // AI Settings
-    aiProvider: {
-      type: String,
-      enum: ["openai", "anthropic", "gemini", "custom", ""],
-      default: "",
+    // ── AI Configuration (Multi-Provider) ──
+    ai: {
+      type: {
+        gemini: {
+          enabled: { type: Boolean, default: false },
+          key: { type: String, default: "", select: false },
+          model: { type: String, default: "gemini-2.5-flash" },
+        },
+        groq: {
+          enabled: { type: Boolean, default: false },
+          key: { type: String, default: "", select: false },
+          model: { type: String, default: "whisper-large-v3" },
+        },
+        autoAnalyse: { type: Boolean, default: false },
+        autoAnalyseCallLogs: { type: Boolean, default: true },
+        prompt: { type: String, default: "" },
+        scanNotes: { type: Boolean, default: true },
+      },
+      default: {
+        gemini: { enabled: false, key: "", model: "gemini-2.5-flash" },
+        groq: { enabled: false, key: "", model: "whisper-large-v3" },
+        autoAnalyse: false,
+        autoAnalyseCallLogs: true,
+        prompt: "",
+        scanNotes: true,
+      },
     },
-    aiKey: { type: String, default: "" },
-    aiModel: { type: String, default: "" },
-    aiEndpoint: { type: String, default: "" },
-    aiPrompt: { type: String, default: "" },
-    aiAutoAnalyse: { type: Boolean, default: false },
-    aiScanNotes: { type: Boolean, default: true },
-    aiIntent: { type: Boolean, default: false },
 
     // General
     companyName: { type: String, default: "" },

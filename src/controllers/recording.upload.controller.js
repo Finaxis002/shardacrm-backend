@@ -7,8 +7,10 @@ import ApiResponse from "../utils/apiResponse.js";
 import ApiError from "../utils/apiError.js";
 import Lead from "../models/Lead.model.js";
 import Activity from "../models/Activity.model.js";
+import Settings from "../models/Settings.model.js";
 import { analyzeCallRecording } from "../services/aiCallAnalysis.service.js";
 import logger from "../utils/logger.js";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -32,10 +34,10 @@ export const uploadRecordingMiddleware = multer({
   },
   limits: { fileSize: 100 * 1024 * 1024 },
 }).single("recording");
-// Runs in the background after the upload response has already been sent.
-const runAiAnalysisInBackground = async (activityId, filePath, leadId, organization) => {
+
+const runAiAnalysisInBackground = async (activityId, filePath, leadId, organization, userId) => {
   try {
-    const analysis = await analyzeCallRecording(filePath);
+    const analysis = await analyzeCallRecording(filePath, userId, organization);
 
     await Activity.findByIdAndUpdate(activityId, {
       $set: {
@@ -51,34 +53,29 @@ const runAiAnalysisInBackground = async (activityId, filePath, leadId, organizat
     });
 
     await Lead.updateOne(
-  {
-    _id: leadId,
-    "recordings.filename": path.basename(filePath),
-  },
-  {
-    $set: {
-      "recordings.$.transcript": analysis.transcript,
-      "recordings.$.summary": analysis.summary,
-      "recordings.$.intent": analysis.intent,
-      "recordings.$.redFlags": analysis.redFlags,
-      "recordings.$.objections": analysis.objections,
-      "recordings.$.nextSteps": analysis.nextSteps,
-    },
-  }
-);
+      { _id: leadId, "recordings.filename": path.basename(filePath) },
+      {
+        $set: {
+          "recordings.$.transcript": analysis.transcript,
+          "recordings.$.summary": analysis.summary,
+          "recordings.$.intent": analysis.intent,
+          "recordings.$.redFlags": analysis.redFlags,
+          "recordings.$.objections": analysis.objections,
+          "recordings.$.nextSteps": analysis.nextSteps,
+        },
+      }
+    );
 
-    logger.info(`AI analysis completed for activity ${activityId}`);
- } catch (err) {
+    logger.info(`AI analysis completed for activity ${activityId} via ${analysis.provider}`);
+  } catch (err) {
     console.error("=== AI ANALYSIS ERROR ===", err);
-    logger.error(`AI analysis failed for activity ${activityId}`, {
-      error: err.message,
-    });
-
+    logger.error(`AI analysis failed for activity ${activityId}`, { error: err.message });
     await Activity.findByIdAndUpdate(activityId, {
       $set: { text: "AI analysis failed — recording is still available above." },
     });
   }
 };
+
 export const uploadRecordingFile = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const organization = req.user.organization;
@@ -93,7 +90,7 @@ export const uploadRecordingFile = asyncHandler(async (req, res) => {
 
   const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 5000}`;
   const fileUrl = `${baseUrl}/uploads/recordings/${req.file.filename}`;
-  const label = req.body.label || req.file.originalname.replace(/\.[^/.]+$/, "");
+  const label = req.body.label || req.file.originalname.replace(/\.\w+$/, "");
 
   const newRecording = {
     label,
@@ -104,13 +101,12 @@ export const uploadRecordingFile = asyncHandler(async (req, res) => {
     size: req.file.size,
     uploadedAt: new Date(),
     uploadedBy: req.user._id,
-
-      transcript: "",
-  summary: "",
-  intent: "",
-  redFlags: [],
-  objections: [],
-  nextSteps: [],
+    transcript: "",
+    summary: "",
+    intent: "",
+    redFlags: [],
+    objections: [],
+    nextSteps: [],
   };
 
   lead.recordings = lead.recordings || [];
@@ -129,8 +125,11 @@ export const uploadRecordingFile = asyncHandler(async (req, res) => {
 
   res.status(200).json(new ApiResponse(200, { recording: newRecording }, "Recording uploaded successfully"));
 
-  // Fire-and-forget — response already sent above, this runs after
-  // runAiAnalysisInBackground(activity._id, req.file.path, lead._id, organization);
+  const settings = await Settings.findOne({ organization })
+    .select("+ai.gemini.key +ai.groq.key");
+  if (settings?.ai?.autoAnalyse) {
+    runAiAnalysisInBackground(activity._id, req.file.path, lead._id, organization, req.user._id);
+  }
 });
 
 export const deleteRecording = asyncHandler(async (req, res) => {
@@ -140,13 +139,9 @@ export const deleteRecording = asyncHandler(async (req, res) => {
   const lead = await Lead.findOne({ _id: id, organization });
   if (!lead) throw new ApiError(404, "Lead not found");
 
-  await Lead.findByIdAndUpdate(
-    lead._id,
-    { $pull: { recordings: { filename } } },
-    { new: true }
-  );
+  await Lead.findByIdAndUpdate(lead._id, { $pull: { recordings: { filename } } }, { new: true });
 
- const filePath = path.join(__dirname, "..", "uploads", "recordings", filename);
+  const filePath = path.join(__dirname, "..", "uploads", "recordings", filename);
   fs.unlink(filePath, () => {});
 
   res.status(200).json(new ApiResponse(200, null, "Recording deleted"));
@@ -157,32 +152,15 @@ export const generateRecordingSummary = asyncHandler(async (req, res) => {
   const organization = req.user.organization;
 
   const lead = await Lead.findOne({ _id: id, organization });
+  if (!lead) throw new ApiError(404, "Lead not found");
 
-  if (!lead) {
-    throw new ApiError(404, "Lead not found");
-  }
+  const recording = lead.recordings.find((r) => r.filename === filename);
+  if (!recording) throw new ApiError(404, "Recording not found");
 
-  const recording = lead.recordings.find(
-    (r) => r.filename === filename
-  );
+  const filePath = path.join(__dirname, "..", "uploads", "recordings", filename);
+  if (!fs.existsSync(filePath)) throw new ApiError(404, "Recording file not found");
 
-  if (!recording) {
-    throw new ApiError(404, "Recording not found");
-  }
-
-  const filePath = path.join(
-    __dirname,
-    "..",
-    "uploads",
-    "recordings",
-    filename
-  );
-
-  if (!fs.existsSync(filePath)) {
-    throw new ApiError(404, "Recording file not found");
-  }
-
-  const analysis = await analyzeCallRecording(filePath);
+  const analysis = await analyzeCallRecording(filePath, req.user._id, organization);
 
   recording.transcript = analysis.transcript;
   recording.summary = analysis.summary;
@@ -193,11 +171,5 @@ export const generateRecordingSummary = asyncHandler(async (req, res) => {
 
   await lead.save();
 
-  return res.status(200).json(
-    new ApiResponse(
-      200,
-      recording,
-      "Summary generated successfully"
-    )
-  );
+  return res.status(200).json(new ApiResponse(200, recording, "Summary generated successfully"));
 });
